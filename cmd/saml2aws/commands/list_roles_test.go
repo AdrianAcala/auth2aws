@@ -2,6 +2,7 @@ package commands
 
 import (
 	b64 "encoding/base64"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -117,12 +118,29 @@ func TestListRolesJSONOutput(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	assert.Contains(t, output, `"Name":"Account: account-alias (000000000001)"`)
-	assert.Contains(t, output, `"RoleARN":"arn:aws:iam::000000000001:role/Development"`)
-	assert.Contains(t, output, `"RoleARN":"arn:aws:iam::000000000001:role/Production"`)
-	assert.Contains(t, output, `"Name":"Account: 000000000002"`)
-	assert.Contains(t, output, `"RoleARN":"arn:aws:iam::000000000002:role/Production"`)
-	assert.Contains(t, output, `"PrincipalARN":"arn:aws:iam::000000000001:saml-provider/test-idp"`)
+	// Verify the output is valid JSON and has the expected structure.
+	var accounts []struct {
+		Name  string `json:"Name"`
+		Roles []struct {
+			RoleARN      string `json:"RoleARN"`
+			PrincipalARN string `json:"PrincipalARN"`
+			Name         string `json:"Name"`
+		} `json:"Roles"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(output)), &accounts))
+
+	require.Len(t, accounts, 2)
+
+	assert.Equal(t, "Account: account-alias (000000000001)", accounts[0].Name)
+	require.Len(t, accounts[0].Roles, 2)
+	assert.Equal(t, "arn:aws:iam::000000000001:role/Development", accounts[0].Roles[0].RoleARN)
+	assert.Equal(t, "arn:aws:iam::000000000001:saml-provider/test-idp", accounts[0].Roles[0].PrincipalARN)
+	assert.Equal(t, "arn:aws:iam::000000000001:role/Production", accounts[0].Roles[1].RoleARN)
+
+	assert.Equal(t, "Account: 000000000002", accounts[1].Name)
+	require.Len(t, accounts[1].Roles, 1)
+	assert.Equal(t, "arn:aws:iam::000000000002:role/Production", accounts[1].Roles[0].RoleARN)
+	assert.Equal(t, "arn:aws:iam::000000000002:saml-provider/test-idp", accounts[1].Roles[0].PrincipalARN)
 }
 
 func TestListRolesReturnsErrorWhenNoRoles(t *testing.T) {
