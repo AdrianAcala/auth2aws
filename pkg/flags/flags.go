@@ -52,6 +52,7 @@ type LoginExecFlags struct {
 	CredentialProcess bool
 	TryNoPrompt       bool
 	JSON              bool
+	JSONPretty        bool
 }
 
 type ConsoleFlags struct {

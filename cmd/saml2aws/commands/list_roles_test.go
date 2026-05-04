@@ -127,7 +127,57 @@ func TestListRolesJSONOutput(t *testing.T) {
 			Name         string `json:"Name"`
 		} `json:"Roles"`
 	}
-	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(output)), &accounts))
+	trimmed := strings.TrimSpace(output)
+	require.NoError(t, json.Unmarshal([]byte(trimmed), &accounts))
+
+	// Compact JSON must be a single line (no embedded newlines).
+	assert.NotContains(t, trimmed, "\n")
+
+	require.Len(t, accounts, 2)
+
+	assert.Equal(t, "Account: account-alias (000000000001)", accounts[0].Name)
+	require.Len(t, accounts[0].Roles, 2)
+	assert.Equal(t, "arn:aws:iam::000000000001:role/Development", accounts[0].Roles[0].RoleARN)
+	assert.Equal(t, "arn:aws:iam::000000000001:saml-provider/test-idp", accounts[0].Roles[0].PrincipalARN)
+	assert.Equal(t, "arn:aws:iam::000000000001:role/Production", accounts[0].Roles[1].RoleARN)
+
+	assert.Equal(t, "Account: 000000000002", accounts[1].Name)
+	require.Len(t, accounts[1].Roles, 1)
+	assert.Equal(t, "arn:aws:iam::000000000002:role/Production", accounts[1].Roles[0].RoleARN)
+	assert.Equal(t, "arn:aws:iam::000000000002:saml-provider/test-idp", accounts[1].Roles[0].PrincipalARN)
+}
+
+func TestListRolesJSONPrettyOutput(t *testing.T) {
+	defer gock.Off()
+	mockAWSSignIn(t)
+
+	samlAssertion := samlAssertionFixture(t)
+	awsRoles := awsRolesForSAMLHTML()
+	loginFlags := &flags.LoginExecFlags{
+		CommonFlags: &flags.CommonFlags{},
+		JSONPretty:  true,
+	}
+
+	output := captureStdout(t, func() {
+		err := listRoles(awsRoles, samlAssertion, loginFlags)
+		assert.NoError(t, err)
+	})
+
+	// Verify the output is valid JSON and has the expected structure.
+	var accounts []struct {
+		Name  string `json:"Name"`
+		Roles []struct {
+			RoleARN      string `json:"RoleARN"`
+			PrincipalARN string `json:"PrincipalARN"`
+			Name         string `json:"Name"`
+		} `json:"Roles"`
+	}
+	trimmed := strings.TrimSpace(output)
+	require.NoError(t, json.Unmarshal([]byte(trimmed), &accounts))
+
+	// Pretty-printed JSON must contain newlines and indentation.
+	assert.Contains(t, trimmed, "\n")
+	assert.Contains(t, trimmed, "  ")
 
 	require.Len(t, accounts, 2)
 
