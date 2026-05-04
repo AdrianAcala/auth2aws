@@ -120,8 +120,10 @@ func TestListRolesJSONOutput(t *testing.T) {
 
 	// Verify the output is valid JSON and has the expected structure.
 	var accounts []struct {
-		Name  string `json:"Name"`
-		Roles []struct {
+		Name          string `json:"Name"`
+		AccountNumber string `json:"AccountNumber"`
+		AccountAlias  string `json:"AccountAlias"`
+		Roles         []struct {
 			RoleARN      string `json:"RoleARN"`
 			PrincipalARN string `json:"PrincipalARN"`
 			Name         string `json:"Name"`
@@ -136,12 +138,16 @@ func TestListRolesJSONOutput(t *testing.T) {
 	require.Len(t, accounts, 2)
 
 	assert.Equal(t, "Account: account-alias (000000000001)", accounts[0].Name)
+	assert.Equal(t, "000000000001", accounts[0].AccountNumber)
+	assert.Equal(t, "account-alias", accounts[0].AccountAlias)
 	require.Len(t, accounts[0].Roles, 2)
 	assert.Equal(t, "arn:aws:iam::000000000001:role/Development", accounts[0].Roles[0].RoleARN)
 	assert.Equal(t, "arn:aws:iam::000000000001:saml-provider/test-idp", accounts[0].Roles[0].PrincipalARN)
 	assert.Equal(t, "arn:aws:iam::000000000001:role/Production", accounts[0].Roles[1].RoleARN)
 
 	assert.Equal(t, "Account: 000000000002", accounts[1].Name)
+	assert.Equal(t, "000000000002", accounts[1].AccountNumber)
+	assert.Equal(t, "", accounts[1].AccountAlias)
 	require.Len(t, accounts[1].Roles, 1)
 	assert.Equal(t, "arn:aws:iam::000000000002:role/Production", accounts[1].Roles[0].RoleARN)
 	assert.Equal(t, "arn:aws:iam::000000000002:saml-provider/test-idp", accounts[1].Roles[0].PrincipalARN)
@@ -165,8 +171,10 @@ func TestListRolesJSONPrettyOutput(t *testing.T) {
 
 	// Verify the output is valid JSON and has the expected structure.
 	var accounts []struct {
-		Name  string `json:"Name"`
-		Roles []struct {
+		Name          string `json:"Name"`
+		AccountNumber string `json:"AccountNumber"`
+		AccountAlias  string `json:"AccountAlias"`
+		Roles         []struct {
 			RoleARN      string `json:"RoleARN"`
 			PrincipalARN string `json:"PrincipalARN"`
 			Name         string `json:"Name"`
@@ -182,12 +190,16 @@ func TestListRolesJSONPrettyOutput(t *testing.T) {
 	require.Len(t, accounts, 2)
 
 	assert.Equal(t, "Account: account-alias (000000000001)", accounts[0].Name)
+	assert.Equal(t, "000000000001", accounts[0].AccountNumber)
+	assert.Equal(t, "account-alias", accounts[0].AccountAlias)
 	require.Len(t, accounts[0].Roles, 2)
 	assert.Equal(t, "arn:aws:iam::000000000001:role/Development", accounts[0].Roles[0].RoleARN)
 	assert.Equal(t, "arn:aws:iam::000000000001:saml-provider/test-idp", accounts[0].Roles[0].PrincipalARN)
 	assert.Equal(t, "arn:aws:iam::000000000001:role/Production", accounts[0].Roles[1].RoleARN)
 
 	assert.Equal(t, "Account: 000000000002", accounts[1].Name)
+	assert.Equal(t, "000000000002", accounts[1].AccountNumber)
+	assert.Equal(t, "", accounts[1].AccountAlias)
 	require.Len(t, accounts[1].Roles, 1)
 	assert.Equal(t, "arn:aws:iam::000000000002:role/Production", accounts[1].Roles[0].RoleARN)
 	assert.Equal(t, "arn:aws:iam::000000000002:saml-provider/test-idp", accounts[1].Roles[0].PrincipalARN)
