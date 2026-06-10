@@ -81,7 +81,7 @@ func (ac *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 	ac.client.Transport = ntlmssp.Negotiator{
 		RoundTripper: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: ac.idpAccount.SkipVerify,
 			},
 		},
 	}

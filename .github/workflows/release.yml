@@ -24,7 +24,9 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     if: github.event_name != 'workflow_dispatch'
-    permissions: write-all
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4
