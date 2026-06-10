@@ -411,6 +411,7 @@ func setupTestClient(t *testing.T, ts *httptest.Server, mfa string) (*Client, *c
 		mfa:             mfa,
 		disableSessions: false,
 		rememberDevice:  true,
+		skipVerify:      true,
 	}
 	loginDetails := &creds.LoginDetails{URL: ts.URL, Username: "user@example.com", Password: "test123"}
 	return ac, loginDetails
