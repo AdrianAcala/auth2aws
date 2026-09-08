@@ -1,4 +1,6 @@
 ---
+version: 2
+
 project_name: saml2aws
 
 builds:
@@ -18,7 +20,7 @@ builds:
   env:
     - CGO_ENABLED=1
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     wrap_in_directory: false
     # remove README and LICENSE
     files:
