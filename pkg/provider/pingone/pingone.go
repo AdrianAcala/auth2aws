@@ -100,6 +100,9 @@ func (ac *Client) follow(ctx context.Context, req *http.Request) (string, error)
 	} else if docIsFormSelectDevice(doc) {
 		logger.WithField("type", "select-device").Debug("doc detect")
 		handler = ac.handleFormSelectDevice
+	} else if docIsFormDeviceProfiling(doc) {
+		logger.WithField("type", "device-profiling").Debug("doc detect")
+		handler = ac.handleFormDeviceProfiling
 	} else if docIsOTP(doc) {
 		logger.WithField("type", "otp").Debug("doc detect")
 		handler = ac.handleOTP
@@ -112,9 +115,6 @@ func (ac *Client) follow(ctx context.Context, req *http.Request) (string, error)
 	} else if docIsRefresh(doc) {
 		logger.WithField("type", "refresh").Debug("doc detect")
 		handler = ac.handleRefresh
-	} else if docIsFormDeviceProfiling(doc) {
-		logger.WithField("type", "device-profiling").Debug("doc detect")
-		handler = ac.handleFormDeviceProfiling
 	}
 	if handler == nil {
 		html, _ := doc.Selection.Html()
@@ -277,15 +277,16 @@ func (ac *Client) handleFormSelectDevice(ctx context.Context, doc *goquery.Docum
 }
 
 func (ac *Client) handleFormDeviceProfiling(ctx context.Context, doc *goquery.Document, res *http.Response) (context.Context, *http.Request, error) {
-	form, err := page.NewFormFromDocument(doc, "")
+	form, err := page.NewFormFromDocument(doc, "form#device-profile-form")
 	if err != nil {
 		return ctx, nil, errors.Wrap(err, "error extracting redirect form")
 	}
 
-	form.URL, err = makeAbsoluteURL(form.URL, makeBaseURL(res.Request.URL))
+	actionURL, err := url.Parse(form.URL)
 	if err != nil {
 		return ctx, nil, err
 	}
+	form.URL = res.Request.URL.ResolveReference(actionURL).String()
 
 	req, err := form.BuildRequest()
 
@@ -321,7 +322,7 @@ func docIsFormResume(doc *goquery.Document) bool {
 }
 
 func docIsFormDeviceProfiling(doc *goquery.Document) bool {
-	return doc.Has("form[id=\"device-profile-form\"]").Size() == 1
+	return doc.Find("form#device-profile-form[action]").Size() == 1
 }
 
 func docIsFormRedirectToTarget(doc *goquery.Document, target string) bool {
