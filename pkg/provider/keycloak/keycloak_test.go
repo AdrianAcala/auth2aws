@@ -284,6 +284,41 @@ func TestClient_extractKc25WebauthnParameters(t *testing.T) {
 	require.Equal(t, "example.com", rpID)
 }
 
+func TestClient_extractWebauthnParametersAcceptsDoubleQuotedObjectFields(t *testing.T) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(`
+		<input name="authn_use_chk" value="credential-id">
+		<script>const options = { challenge: "challenge-value", rpId : "example.net" };</script>
+	`))
+	require.NoError(t, err)
+
+	credentialIDs, challenge, rpID, err := extractWebauthnParameters(doc)
+	require.NoError(t, err)
+	require.Equal(t, []string{"credential-id"}, credentialIDs)
+	require.Equal(t, "challenge-value", challenge)
+	require.Equal(t, "example.net", rpID)
+}
+
+func TestClient_extractWebauthnParametersRequiresChallengeAndRpID(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		err    string
+	}{
+		{name: "missing challenge", script: `const options = { rpId: "example.net" };`, err: "no WebAuthn challenge found on page"},
+		{name: "missing rpID", script: `const options = { challenge: "challenge-value" };`, err: "no WebAuthn relying party ID found on page"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(`<input name="authn_use_chk" value="credential-id"><script>` + tt.script + `</script>`))
+			require.NoError(t, err)
+
+			_, _, _, err = extractWebauthnParameters(doc)
+			require.EqualError(t, err, tt.err)
+		})
+	}
+}
+
 func TestClient_CustomizeAuthErrorValidator_DefaultSetup(t *testing.T) {
 	// Test with the default auth error message and the default HTTP element
 	idpAccount := cfg.IDPAccount{
