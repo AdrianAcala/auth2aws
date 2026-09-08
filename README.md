@@ -219,7 +219,7 @@ Flags:
       --url=URL                The URL of the SAML IDP server used to login. (env: SAML2AWS_URL)
       --username=USERNAME      The username used to login. (env: SAML2AWS_USERNAME)
       --password=PASSWORD      The password used to login. (env: SAML2AWS_PASSWORD)
-      --mfa-token=MFA-TOKEN    The current MFA token (supported in Keycloak, ADFS, GoogleApps). (env: SAML2AWS_MFA_TOKEN)
+      --mfa-token=MFA-TOKEN    The current MFA token (supported in Keycloak, ADFS, GoogleApps, OneLogin TOTP). (env: SAML2AWS_MFA_TOKEN)
       --role=ROLE              The ARN of the role to assume. (env: SAML2AWS_ROLE)
       --aws-urn=AWS-URN        The URN used by SAML when you login. (env: SAML2AWS_AWS_URN)
       --skip-prompt            Skip prompting for parameters during login.
@@ -881,4 +881,3 @@ Please note that your Okta session duration and MFA policies are governed by you
 # License
 
 This code is Copyright (c) 2024 [Versent](https://versent.com.au) and released under the MIT license. All rights not explicitly granted in the MIT license are reserved. See the included LICENSE.md file for more details.
-
