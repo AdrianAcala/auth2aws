@@ -17,7 +17,10 @@ import (
 	"testing/iotest"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/versent/saml2aws/v2/helper/credentials"
 	"github.com/versent/saml2aws/v2/mocks"
 	"github.com/versent/saml2aws/v2/pkg/cfg"
 	"github.com/versent/saml2aws/v2/pkg/creds"
@@ -662,18 +665,32 @@ func TestSetDeviceTokenCookie(t *testing.T) {
 	oc, err := New(idpAccount)
 	assert.Nil(t, err)
 
+	credentialHelper := mocks.NewHelper(t)
+	deviceTokenKey := loginDetails.URL + "/deviceToken"
+	credentialHelper.On("Get", deviceTokenKey).
+		Return("", "", credentials.ErrCredentialsNotFound).
+		Once()
+	credentialHelper.On("Add", mock.MatchedBy(func(saved *credentials.Credentials) bool {
+		return saved.ServerURL == deviceTokenKey &&
+			saved.Username == loginDetails.Username &&
+			uuid.Validate(saved.Secret) == nil
+	})).Return(nil).Once()
+
+	previousHelper := credentials.CurrentHelper
+	credentials.CurrentHelper = credentialHelper
+	t.Cleanup(func() { credentials.CurrentHelper = previousHelper })
+
 	err = oc.setDeviceTokenCookie(loginDetails)
 	assert.Nil(t, err)
 
-	expectedDT := fmt.Sprintf("okta_%s_saml2aws", loginDetails.Username)
 	actualDT := ""
 	for _, c := range oc.client.Jar.Cookies(&url.URL{Scheme: "https", Host: "idp.example.com", Path: "/abc"}) {
 		if c.Name == "DT" {
 			actualDT = c.Value
 		}
 	}
-	assert.NotEqual(t, actualDT, "")
-	assert.Equal(t, expectedDT, actualDT)
+	assert.NoError(t, uuid.Validate(actualDT))
+	assert.NotEqual(t, fmt.Sprintf("okta_%s_saml2aws", loginDetails.Username), actualDT)
 
 }
 

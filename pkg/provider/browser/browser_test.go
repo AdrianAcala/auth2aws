@@ -235,29 +235,40 @@ func TestAutoFill(t *testing.T) {
 	}
 	// iterate over each login page
 	for _, pageLocation := range pageLocations {
-		data, err := os.ReadFile(pageLocation)
-		require.Nil(t, err)
+		t.Run(pageLocation, func(t *testing.T) {
+			data, err := os.ReadFile(pageLocation)
+			require.NoError(t, err)
 
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write(data)
-		}))
-		defer ts.Close()
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(data)
+			}))
+			defer ts.Close()
 
-		pw, _ := playwright.Run()
-		browser, _ := pw.Chromium.Launch()
-		context, _ := browser.NewContext()
-		page, _ := context.NewPage()
-		_, _ = page.Goto(ts.URL)
+			pw, err := playwright.Run()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, pw.Stop()) }()
+			browser, err := pw.Chromium.Launch()
+			require.NoError(t, err)
+			context, err := browser.NewContext()
+			require.NoError(t, err)
+			page, err := context.NewPage()
+			require.NoError(t, err)
+			_, err = page.Goto(ts.URL)
+			require.NoError(t, err)
 
-		loginDetails := &creds.LoginDetails{URL: ts.URL, Username: "golang", Password: "gopher"}
-		_ = autoFill(page, loginDetails)
+			loginDetails := &creds.LoginDetails{URL: ts.URL, Username: "golang", Password: "gopher"}
+			require.NoError(t, autoFill(page, loginDetails))
 
-		username, _ := page.Locator("input[name='username']").First().InputValue()
-		assert.Equal(t, "golang", username)
-		password, _ := page.Locator("input[type='password']").First().InputValue()
-		assert.Equal(t, "gopher", password)
+			username, err := page.Locator("input[name='username']").First().InputValue()
+			require.NoError(t, err)
+			assert.Equal(t, "golang", username)
+			password, err := page.Locator("input[type='password']").First().InputValue()
+			require.NoError(t, err)
+			assert.Equal(t, "gopher", password)
 
-		result, _ := page.Locator("div#result").Evaluate("el => el.innerText", nil)
-		assert.Equal(t, "golang:gopher", result)
+			result, err := page.Locator("div#result").Evaluate("el => el.innerText", nil)
+			require.NoError(t, err)
+			assert.Equal(t, "golang:gopher", result)
+		})
 	}
 }

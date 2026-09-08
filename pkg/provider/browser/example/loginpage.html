@@ -14,7 +14,7 @@
         <input type="password" name="password" />
       </div>
 
-      <div><input type="submit">Login</button></div>
+      <div><input type="submit" value="Login" /></div>
     </form>
 
     <div id="result" style="display: none">
@@ -27,7 +27,7 @@
       const formSection = document.getElementById("form");
       const resultSection = document.getElementById("result");
 
-      form.onsubmit = function (event) {
+      formSection.onsubmit = function (event) {
         event.preventDefault();
         const username = event.target.elements.username.value;
         const password = event.target.elements.password.value;

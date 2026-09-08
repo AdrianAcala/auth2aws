@@ -256,7 +256,14 @@ var autoFill = func(page playwright.Page, loginDetails *creds.LoginDetails) erro
 	if count > 0 {
 		return submitLocator.Click()
 	} else { // Use javascript to submit the form when no submit input or button is found
-		_, err := page.Evaluate(`document.querySelector('input[type="password"]').form.submit()`, nil)
+		_, err := page.Evaluate(`(() => {
+			const form = document.querySelector('input[type="password"]').form;
+			if (typeof form.requestSubmit === "function") {
+				form.requestSubmit();
+			} else {
+				form.submit();
+			}
+		})()`, nil)
 		return err
 	}
 }
