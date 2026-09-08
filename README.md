@@ -298,6 +298,8 @@ Commands:
     List available role ARNs.
         --cache-saml             Caches the SAML response (env: SAML2AWS_CACHE_SAML)
         --cache-file=CACHE-FILE  The location of the SAML cache file (env: SAML2AWS_SAML_CACHE_FILE)
+        --download-browser-driver
+                                 Automatically download browsers for Browser IDP. (env: SAML2AWS_AUTO_BROWSER_DOWNLOAD)
 
 
   script [<flags>]
@@ -881,4 +883,3 @@ Please note that your Okta session duration and MFA policies are governed by you
 # License
 
 This code is Copyright (c) 2024 [Versent](https://versent.com.au) and released under the MIT license. All rights not explicitly granted in the MIT license are reserved. See the included LICENSE.md file for more details.
-
