@@ -17,7 +17,7 @@ import (
 func TestResolveLoginDetailsWithFlags(t *testing.T) {
 
 	commonFlags := &flags.CommonFlags{URL: "https://id.example.com", Username: "wolfeidau", Password: "testtestlol", MFAIPAddress: "127.0.0.1", MFAToken: "123456", SkipPrompt: true}
-	loginFlags := &flags.LoginExecFlags{CommonFlags: commonFlags}
+	loginFlags := &flags.LoginExecFlags{CommonFlags: commonFlags, DownloadBrowser: true}
 
 	idpa := &cfg.IDPAccount{
 		URL:      "https://id.example.com",
@@ -28,7 +28,7 @@ func TestResolveLoginDetailsWithFlags(t *testing.T) {
 	loginDetails, err := resolveLoginDetails(idpa, loginFlags)
 
 	assert.Empty(t, err)
-	assert.Equal(t, &creds.LoginDetails{Username: "wolfeidau", Password: "testtestlol", URL: "https://id.example.com", MFAToken: "123456", MFAIPAddress: "127.0.0.1"}, loginDetails)
+	assert.Equal(t, &creds.LoginDetails{Username: "wolfeidau", Password: "testtestlol", URL: "https://id.example.com", MFAToken: "123456", MFAIPAddress: "127.0.0.1", DownloadBrowser: true}, loginDetails)
 }
 
 func TestOktaResolveLoginDetailsWithFlags(t *testing.T) {
