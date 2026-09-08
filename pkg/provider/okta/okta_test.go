@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"testing/iotest"
 
@@ -842,18 +843,28 @@ const fakeEndpointForm = `
 `
 
 type testServer struct {
-	handlers []http.HandlerFunc
-	t        *testing.T
+	handlers     []http.HandlerFunc
+	pathHandlers map[string]http.HandlerFunc
+	mu           sync.Mutex
+	t            *testing.T
 }
 
 func (s *testServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var h http.HandlerFunc
-	if len(s.handlers) == 0 {
+	s.mu.Lock()
+	if s.pathHandlers != nil {
+		h = s.pathHandlers[r.URL.Path]
+		delete(s.pathHandlers, r.URL.Path)
+	} else if len(s.handlers) != 0 {
+		h, s.handlers = s.handlers[0], s.handlers[1:]
+	}
+	s.mu.Unlock()
+
+	if h == nil {
 		s.t.Errorf("unexpected request: %v", r.URL.String())
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	h, s.handlers = s.handlers[0], s.handlers[1:]
 	h(w, r)
 }
 func TestVerifyTrustedCert(t *testing.T) {
@@ -938,22 +949,22 @@ func TestVerifyEndpointHealth(t *testing.T) {
 	duoTX := "1234567890"
 	host := ""
 
-	handlers := []http.HandlerFunc{
+	handlers := map[string]http.HandlerFunc{
 		// alive
-		func(w http.ResponseWriter, r *http.Request) {
+		"/alive": func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "/alive", r.URL.Path)
 			assert.Equal(t, fmt.Sprintf("https://%s/", host), r.Header.Get("Referer"))
 			assert.Equal(t, fmt.Sprintf("https://%s", host), r.Header.Get("Origin"))
 			assert.NotEmpty(t, r.URL.Query().Get("_"))
 		},
-		func(w http.ResponseWriter, r *http.Request) {
+		"/report": func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "/report", r.URL.Path)
 			assert.Equal(t, fmt.Sprintf("https://%s/", host), r.Header.Get("Referer"))
 			assert.Equal(t, fmt.Sprintf("https://%s", host), r.Header.Get("Origin"))
 			assert.Equal(t, "0dcfcbe4-5e20-47a3-9037-cb1d1bf4ad5b", r.URL.Query().Get("txid"))
 			assert.NotEmpty(t, r.URL.Query().Get("eh_service_url"))
 		},
-		func(w http.ResponseWriter, r *http.Request) {
+		"/frame/check_endpoint_app_status": func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "/frame/check_endpoint_app_status", r.URL.Path)
 			assert.Equal(t, host, r.Header.Get("Referer"))
 			assert.Equal(t, "0dcfcbe4-5e20-47a3-9037-cb1d1bf4ad5b", r.URL.Query().Get("txid"))
@@ -962,7 +973,7 @@ func TestVerifyEndpointHealth(t *testing.T) {
 
 		},
 
-		func(w http.ResponseWriter, r *http.Request) {
+		"/submit": func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "/submit", r.URL.Path)
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, duoTX, r.URL.Query().Get("tx"))
@@ -981,8 +992,8 @@ func TestVerifyEndpointHealth(t *testing.T) {
 		},
 	}
 
-	ts := httptest.NewTLSServer(
-		&testServer{handlers: handlers, t: t})
+	mockServer := &testServer{pathHandlers: handlers, t: t}
+	ts := httptest.NewTLSServer(mockServer)
 	defer ts.Close()
 
 	oc, _ := setupTestClient(t, ts, "PUSH")
@@ -1008,4 +1019,5 @@ func TestVerifyEndpointHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to verify endpoint health: %v", err)
 	}
+	assert.Empty(t, mockServer.pathHandlers)
 }
