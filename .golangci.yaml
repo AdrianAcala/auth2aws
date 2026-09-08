@@ -1,11 +1,49 @@
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
-    - goimports
     - errcheck
-    - gosimple
+    - gocyclo
     - govet
     - ineffassign
+    - misspell
     - staticcheck
-    - typecheck
     - unused
+  settings:
+    gocyclo:
+      min-complexity: 100
+    misspell:
+      ignore-rules:
+        # This is the spelling used by Okta's external form field.
+        - compatability
+    staticcheck:
+      checks:
+        - all
+        - -QF*
+        - -SA1019
+        - -ST1003
+        - -ST1005
+        - -ST1011
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - vendor$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - vendor$
+      - builtin$
+      - examples$
+run:
+  modules-download-mode: readonly

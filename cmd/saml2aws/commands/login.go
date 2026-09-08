@@ -377,7 +377,7 @@ func loginToStsUsingRole(account *cfg.IDPAccount, role *saml2aws.AWSRole, samlAs
 	if account.PolicyFile != "" {
 		policy, err := os.ReadFile(account.PolicyFile)
 		if err != nil {
-			return nil, errors.Wrap(err, fmt.Sprintf("Failed to load supplimental policy file: %s", account.PolicyFile))
+			return nil, errors.Wrap(err, fmt.Sprintf("Failed to load supplemental policy file: %s", account.PolicyFile))
 		}
 		params.Policy = aws.String(string(policy))
 	}

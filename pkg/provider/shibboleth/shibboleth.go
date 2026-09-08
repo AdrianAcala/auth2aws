@@ -209,7 +209,7 @@ func verifyDuoMfa(oc *Client, loginDetails *creds.LoginDetails, duoHost string, 
 		return "", errors.Wrap(err, "error parsing document")
 	}
 
-	// Duo cookie is returned here if mfa bypassed - immediatly return it if found
+	// Duo cookie is returned here if mfa bypassed - immediately return it if found
 	duoTxCookie, ok := doc.Find("input[name=\"js_cookie\"]").Attr("value")
 	if ok {
 		if duoTxCookie == "" {

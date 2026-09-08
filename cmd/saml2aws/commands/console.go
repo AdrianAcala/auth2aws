@@ -162,7 +162,7 @@ func federatedLogin(creds *awsconfig.AWSCredentials, consoleFlags *flags.Console
 		url.QueryEscape(signinToken),
 	)
 
-	// write the URL to stdout making it easy to capture seperately and use in a shell function
+	// write the URL to stdout making it easy to capture separately and use in a shell function
 	if consoleFlags.Link {
 		fmt.Println(loginURL)
 		return nil

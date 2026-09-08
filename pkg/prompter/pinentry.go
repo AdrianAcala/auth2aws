@@ -109,7 +109,7 @@ func (r *RealPinentryRunner) Run(command string) (output string, err error) {
 }
 
 // ParseResults parses the standard output of the pinentry command and determine the
-// user input, or wheter the program yielded any error
+// user input, or whether the program yielded any error
 func ParseResults(pinEntryOutput io.Reader) (output string, err error) {
 	scanner := bufio.NewScanner(pinEntryOutput)
 	for scanner.Scan() {
