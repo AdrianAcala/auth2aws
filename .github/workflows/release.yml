@@ -148,8 +148,6 @@ jobs:
       (needs.release.result == 'success' || needs.release.result == 'skipped')
     steps:
       - name: Normalize tag values
-        env:
-          INPUT_TAG: ${{ github.event.inputs.tag }}
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
