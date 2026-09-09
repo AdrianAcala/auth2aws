@@ -160,15 +160,8 @@ func extractWebauthnParameters(doc *goquery.Document) (credentialIDs []string, c
 		return nil, "", "", errors.New("no credentialID found on page")
 	}
 
-	challengeRE, err := regexp.Compile(`let challenge = "(.+)";`)
-	if err != nil {
-		return nil, "", "", errors.Wrap(err, "could not compile regular expression")
-	}
-
-	rpIDRE, err := regexp.Compile(`let rpId = "(.+)"`)
-	if err != nil {
-		return nil, "", "", errors.Wrap(err, "could not compile regular expression")
-	}
+	challengeRE := regexp.MustCompile(`\bchallenge\s*[:=]\s*["']([^"']+)["']`)
+	rpIDRE := regexp.MustCompile(`\brpId\s*[:=]\s*["']([^"']+)["']`)
 	doc.Find("script").Each(func(i int, s *goquery.Selection) {
 		content := s.Text()
 		challengeSubmatch := challengeRE.FindStringSubmatch(content)
@@ -182,6 +175,14 @@ func extractWebauthnParameters(doc *goquery.Document) (credentialIDs []string, c
 		}
 		rpID = rpIDSubmatch[1]
 	})
+
+	if challenge == "" {
+		return nil, "", "", errors.New("no WebAuthn challenge found on page")
+	}
+	if rpID == "" {
+		return nil, "", "", errors.New("no WebAuthn relying party ID found on page")
+	}
+
 	return credentialIDs, challenge, rpID, nil
 }
 

@@ -2,6 +2,9 @@ package pingone
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"testing"
@@ -40,6 +43,38 @@ func TestDocTypes(t *testing.T) {
 			t.Errorf("expect doc check of %v to be %v", tt.file, tt.expected)
 		}
 	}
+}
+
+func TestHandleFormDeviceProfiling(t *testing.T) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(`
+		<form action="/wrong"><input name="decoy" value="ignore"></form>
+		<form id="device-profile-form" action="../profile/collect" method="post">
+			<input type="hidden" name="devicePayload" value="payload-value">
+			<input type="hidden" name="csrf" value="csrf-value">
+		</form>
+	`))
+	require.NoError(t, err)
+	require.True(t, docIsFormDeviceProfiling(doc))
+
+	requestURL, err := url.Parse("https://authentication.example.com:8443/pingid/start")
+	require.NoError(t, err)
+	response := &http.Response{Request: &http.Request{URL: requestURL}}
+
+	client := &Client{}
+	_, request, err := client.handleFormDeviceProfiling(context.Background(), doc, response)
+	require.NoError(t, err)
+	require.Equal(t, http.MethodPost, request.Method)
+	require.Equal(t, "https://authentication.example.com:8443/profile/collect", request.URL.String())
+	require.NoError(t, request.ParseForm())
+	require.Equal(t, "payload-value", request.Form.Get("devicePayload"))
+	require.Equal(t, "csrf-value", request.Form.Get("csrf"))
+	require.Empty(t, request.Form.Get("decoy"))
+}
+
+func TestDocIsFormDeviceProfilingRequiresAction(t *testing.T) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(`<form id="device-profile-form"></form>`))
+	require.NoError(t, err)
+	require.False(t, docIsFormDeviceProfiling(doc))
 }
 
 var deviceNameTests = []struct {
