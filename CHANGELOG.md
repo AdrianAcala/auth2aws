@@ -55,6 +55,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Infrastructure
 
 - Refresh CI, pin action revisions, and narrow workflow token permissions.
+- Prepare a patch release with a changelog-only commit when the `release` label
+  is added to a pull request, then tag and publish it after merge.
+- Migrate release packaging to the GoReleaser v2 configuration schema and keep
+  the workflow on the latest compatible v2 release.
 
 ## [2.36.19] - 2025-03-13
 

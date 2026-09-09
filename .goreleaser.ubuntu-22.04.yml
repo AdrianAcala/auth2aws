@@ -1,4 +1,6 @@
 ---
+version: 2
+
 project_name: saml2aws-u2f
 
 builds:
@@ -40,16 +42,16 @@ builds:
     - CGO_ENABLED=0
 archives:
   - id: saml2aws
-    format: tar.gz
-    builds: [saml2aws]
+    formats: [tar.gz]
+    ids: [saml2aws]
     wrap_in_directory: false
     # remove README and LICENSE
     files:
       - LICENSE.md
       - README.md
   - id: saml2aws-static
-    format: tar.gz
-    builds: [saml2aws-static]
+    formats: [tar.gz]
+    ids: [saml2aws-static]
     wrap_in_directory: false
     # remove README and LICENSE
     files:
