@@ -3,10 +3,10 @@ package saml2aws
 import (
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
 )
 
 func TestProviderList_Keys(t *testing.T) {

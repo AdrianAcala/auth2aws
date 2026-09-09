@@ -6,14 +6,14 @@ import (
 	"path"
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/helper/credentials"
+	"github.com/AdrianAcala/saml2aws/v2/mocks"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider/onelogin"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/versent/saml2aws/v2/helper/credentials"
-	"github.com/versent/saml2aws/v2/mocks"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/flags"
-	"github.com/versent/saml2aws/v2/pkg/provider/onelogin"
 )
 
 // Configure module

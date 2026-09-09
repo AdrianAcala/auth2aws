@@ -7,7 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/versent/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 )
 
 type authentikContext struct {

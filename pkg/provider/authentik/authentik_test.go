@@ -6,10 +6,10 @@ import (
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/versent/saml2aws/v2/mocks"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
+	"github.com/AdrianAcala/saml2aws/v2/mocks"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 )
 
 func Test_getLoginJSON(t *testing.T) {

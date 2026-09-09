@@ -4,8 +4,8 @@
 package commands
 
 import (
-	"github.com/versent/saml2aws/v2/helper/credentials"
-	"github.com/versent/saml2aws/v2/helper/osxkeychain"
+	"github.com/AdrianAcala/saml2aws/v2/helper/credentials"
+	"github.com/AdrianAcala/saml2aws/v2/helper/osxkeychain"
 )
 
 func init() {

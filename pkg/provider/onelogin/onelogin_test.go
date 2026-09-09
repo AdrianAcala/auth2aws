@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/mocks"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider/onelogin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/versent/saml2aws/v2/mocks"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
-	"github.com/versent/saml2aws/v2/pkg/provider"
-	"github.com/versent/saml2aws/v2/pkg/provider/onelogin"
 )
 
 func TestClient_Authenticate(t *testing.T) {

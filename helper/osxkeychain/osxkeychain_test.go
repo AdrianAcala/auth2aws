@@ -28,8 +28,8 @@ package osxkeychain
 import (
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/helper/credentials"
 	"github.com/stretchr/testify/require"
-	"github.com/versent/saml2aws/v2/helper/credentials"
 )
 
 func TestOSXKeychainHelper(t *testing.T) {

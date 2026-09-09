@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
 	"github.com/stretchr/testify/require"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
 )
 
 type test struct {

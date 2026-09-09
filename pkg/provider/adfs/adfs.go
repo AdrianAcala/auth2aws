@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/pkg/errors"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
-	"github.com/versent/saml2aws/v2/pkg/provider"
 )
 
 // Client wrapper around ADFS enabling authentication and retrieval of assertions

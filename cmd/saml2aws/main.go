@@ -8,12 +8,12 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/AdrianAcala/saml2aws/v2"
+	"github.com/AdrianAcala/saml2aws/v2/cmd/saml2aws/commands"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/sirupsen/logrus"
-	"github.com/versent/saml2aws/v2"
-	"github.com/versent/saml2aws/v2/cmd/saml2aws/commands"
-	"github.com/versent/saml2aws/v2/pkg/flags"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
 )
 
 var (
@@ -67,7 +67,7 @@ func main() {
 	verbose := app.Flag("verbose", "Enable verbose logging").Bool()
 	quiet := app.Flag("quiet", "silences logs").Bool()
 
-	provider := app.Flag("provider", "This flag is obsolete. See: https://github.com/Versent/saml2aws#configuring-idp-accounts").Short('i').Enum("Akamai", "AzureAD", "ADFS", "ADFS2", "Browser", "Ping", "JumpCloud", "Okta", "OneLogin", "PSU", "KeyCloak")
+	provider := app.Flag("provider", "This flag is obsolete. See: https://github.com/AdrianAcala/saml2aws#configuring-idp-accounts").Short('i').Enum("Akamai", "AzureAD", "ADFS", "ADFS2", "Browser", "Ping", "JumpCloud", "Okta", "OneLogin", "PSU", "KeyCloak")
 
 	// Common (to all commands) settings
 	commonFlags := new(flags.CommonFlags)
@@ -176,7 +176,7 @@ func main() {
 
 	// will leave this here for a while during upgrade process
 	if *provider != "" {
-		log.Println("The --provider flag has been replaced with a new configure command. See https://github.com/Versent/saml2aws#configuring-idp-accounts")
+		log.Println("The --provider flag has been replaced with a new configure command. See https://github.com/AdrianAcala/saml2aws#configuring-idp-accounts")
 		os.Exit(1)
 	}
 

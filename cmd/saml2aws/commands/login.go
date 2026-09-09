@@ -9,18 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2"
+	"github.com/AdrianAcala/saml2aws/v2/helper/credentials"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/awsconfig"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/samlcache"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/versent/saml2aws/v2"
-	"github.com/versent/saml2aws/v2/helper/credentials"
-	"github.com/versent/saml2aws/v2/pkg/awsconfig"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/flags"
-	"github.com/versent/saml2aws/v2/pkg/samlcache"
 )
 
 // Login login to ADFS
@@ -118,7 +118,7 @@ func Login(loginFlags *flags.LoginExecFlags) error {
 	if samlAssertion == "" {
 		log.Println("Response did not contain a valid SAML assertion.")
 		log.Println("Please check that your username and password is correct.")
-		log.Println("To see the output follow the instructions in https://github.com/versent/saml2aws#debugging-issues-with-idps")
+		log.Println("To see the output follow the instructions in https://github.com/AdrianAcala/saml2aws#debugging-issues-with-idps")
 		os.Exit(1)
 	}
 

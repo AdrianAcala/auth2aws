@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/require"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
 )
 
 func TestClient_getLoginForm(t *testing.T) {

@@ -28,7 +28,7 @@ type RealPinentryRunner struct {
 // it uses any _pinentry_ binary to capture the security code.
 // Its purpose is mainly to capture the TOTP code outside of the TTY, and thus
 // making it possible to use TOTP with the credential process.
-// https://github.com/Versent/saml2aws#using-saml2aws-as-credential-process
+// https://github.com/AdrianAcala/saml2aws#using-saml2aws-as-credential-process
 type PinentryPrompter struct {
 	Runner          PinentryRunner
 	DefaultPrompter Prompter

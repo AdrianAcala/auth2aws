@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/awsconfig"
 	"github.com/stretchr/testify/assert"
-	"github.com/versent/saml2aws/v2/pkg/awsconfig"
 )
 
 func TestBuildTmplBash(t *testing.T) {

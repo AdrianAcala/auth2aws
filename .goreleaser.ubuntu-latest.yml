@@ -1,4 +1,6 @@
 ---
+version: 2
+
 project_name: saml2aws
 
 builds:
@@ -22,12 +24,15 @@ builds:
       goamd64: v1
       env:
         - CGO_ENABLED=0
+  ignore:
+    - goos: windows
+      goarch: arm
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     wrap_in_directory: false
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     # remove README and LICENSE
     files:
       - LICENSE.md

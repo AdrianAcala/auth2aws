@@ -1,10 +1,13 @@
 # saml2aws
 
-[![GitHub Actions status](https://github.com/Versent/saml2aws/workflows/Go/badge.svg?branch=master)](https://github.com/Versent/saml2aws/actions?query=workflow%3AGo) [![Build status - Windows](https://ci.appveyor.com/api/projects/status/ptpi18kci16o4i82/branch/master?svg=true)](https://ci.appveyor.com/project/davidobrien1985/saml2aws/branch/master)
-[![codecov](https://codecov.io/gh/Versent/saml2aws/branch/master/graph/badge.svg)](https://codecov.io/gh/Versent/saml2aws)
+[![CI](https://github.com/AdrianAcala/saml2aws/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/AdrianAcala/saml2aws/actions/workflows/go.yml)
 
 CLI tool which enables you to login and retrieve [AWS](https://aws.amazon.com/) temporary credentials using
 with [ADFS](https://msdn.microsoft.com/en-us/library/bb897402.aspx) or [PingFederate](https://www.pingidentity.com/en/products/pingfederate.html) Identity Providers.
+
+Moving from `Versent/saml2aws`? See the
+[migration guide](doc/migration-from-versent.md) for repository, Go module,
+installation, and CI changes.
 
 This is based on python code from [
 How to Implement a General Solution for Federated API/CLI Access Using SAML 2.0](https://blogs.aws.amazon.com/security/post/TxU0AVUS9J00FP/How-to-Implement-a-General-Solution-for-Federated-API-CLI-Access-Using-SAML-2-0).
@@ -26,12 +29,9 @@ The process goes something like this:
   - [Requirements](#requirements)
   - [Caveats](#caveats)
   - [Install](#install)
-    - [macOS](#macOS)
-    - [Windows](#windows)
-    - [Linux](#linux)
-      - [Ubuntu](#ubuntu)
-      - [Other](#other)
-      - [Using Make](#using-make)
+    - [Upstream and third-party packages](#upstream-and-third-party-packages)
+      - [macOS](#macos)
+      - [Windows](#windows)
       - [Arch Linux and its derivatives](#arch-linux-and-its-derivatives)
       - [Void Linux](#void-linux)
   - [Autocomplete](#autocomplete)
@@ -93,68 +93,46 @@ Aside from Okta, most of the providers in this project are using screen scraping
 
 ## Install
 
-### macOS
+This fork does not yet publish GitHub release assets. To install the maintained
+`AdrianAcala/saml2aws` version, build it from source with Go 1.22 or newer:
 
-If you're on macOS you can install saml2aws using homebrew!
-
+```bash
+git clone https://github.com/AdrianAcala/saml2aws.git
+cd saml2aws
+go install ./cmd/saml2aws
+saml2aws --version
 ```
+
+`go install` writes the binary to `GOBIN`, or to `GOPATH/bin` when `GOBIN` is
+unset. Make sure that directory is in `PATH`.
+
+To build a binary in the checkout instead:
+
+```bash
+mkdir -p bin
+go build -o bin/saml2aws ./cmd/saml2aws
+./bin/saml2aws --version
+```
+
+On Debian or Ubuntu, hardware U2F support may also require `libudev-dev`.
+
+### Upstream and third-party packages
+
+The package-manager options below are convenient, but they may track the
+upstream Versent project rather than the changes in this fork.
+
+#### macOS
+
+```bash
 brew install saml2aws
 saml2aws --version
 ```
 
-### Windows
+#### Windows
 
-If you're on Windows you can [install saml2aws using chocolatey](https://chocolatey.org/packages?q=saml2aws)!
-
-```
+```powershell
 choco install saml2aws
 saml2aws --version
-```
-
-### Linux
-
-While brew is available for Linux you can also run the following without using a package manager.
-
-#### Ubuntu
-
-Some users of Ubuntu have reported issue with the [Others](#others) Install instruction and reported the following to work (may required using sudo command like for the "mv" function)
-
-```
-CURRENT_VERSION=$(curl -Ls https://api.github.com/repos/Versent/saml2aws/releases/latest | grep 'tag_name' | cut -d'v' -f2 | cut -d'"' -f1)
-wget https://github.com/Versent/saml2aws/releases/download/v${CURRENT_VERSION}/saml2aws_${CURRENT_VERSION}_linux_amd64.tar.gz
-tar -xzvf saml2aws_${CURRENT_VERSION}_linux_amd64.tar.gz
-mv saml2aws /usr/local/bin/
-chmod u+x /usr/local/bin/saml2aws
-saml2aws --version
-```
-
-For U2F support, replace wget line above with `wget https://github.com/Versent/saml2aws/releases/download/v${CURRENT_VERSION}/saml2aws-u2f_${CURRENT_VERSION}_linux_amd64.tar.gz`
-
-#### Other
-
-```
-mkdir -p ~/.local/bin
-CURRENT_VERSION=$(curl -Ls https://api.github.com/repos/Versent/saml2aws/releases/latest | grep 'tag_name' | cut -d'v' -f2 | cut -d'"' -f1)
-wget -c "https://github.com/Versent/saml2aws/releases/download/v${CURRENT_VERSION}/saml2aws_${CURRENT_VERSION}_linux_amd64.tar.gz" -O - | tar -xzv -C ~/.local/bin
-chmod u+x ~/.local/bin/saml2aws
-hash -r
-saml2aws --version
-```
-If `saml2aws --version` does not work as intended, you may need to update your terminal configuration file (like ~/.bashrc, ~/.profile, ~/.zshrc) to include `export PATH="$PATH:$HOME/.local/bin/"` at the end of the file.
-
-For U2F support, replace wget line above with `wget -c "https://github.com/Versent/saml2aws/releases/download/v${CURRENT_VERSION}/saml2aws-u2f_${CURRENT_VERSION}_linux_amd64.tar.gz" -O - | tar -xzv -C ~/.local/bin`
-
-#### Using Make
-
-You will need [Go Tools](https://golang.org/doc/install) (you can check your package maintainer as well) installed and the [Go Lint tool](https://github.com/alecthomas/gometalinter)
-
-Clone this repo to your `$GOPATH/src` directory
-
-Now you can install by running
-
-```
-make
-make install
 ```
 
 #### [Arch Linux](https://archlinux.org/) and its derivatives
@@ -209,7 +187,7 @@ Flags:
       --version                Show application version.
       --verbose                Enable verbose logging
       --quiet                  silences logs
-  -i, --provider=PROVIDER      This flag is obsolete. See: https://github.com/Versent/saml2aws#configuring-idp-accounts
+  -i, --provider=PROVIDER      This flag is obsolete. See: https://github.com/AdrianAcala/saml2aws#configuring-idp-accounts
       --config=CONFIG          Path/filename of saml2aws config file (env: SAML2AWS_CONFIGFILE)
   -a, --idp-account="default"  The name of the configured IDP account. (env: SAML2AWS_IDP_ACCOUNT)
       --idp-provider=IDP-PROVIDER
@@ -697,7 +675,7 @@ Example: typical configuration with such parameters would look like follows:
 ```
 [default]
 url                     = https://id.customer.cloud
-username                = user@versent.com.au
+username                = user@example.com
 provider                = Ping
 mfa                     = Auto
 skip_verify             = false
@@ -719,7 +697,7 @@ Example: If your KeyCloak server returns the authentication error message "Inval
 ```
 [default]
 url                     = https://id.customer.cloud
-username                = user@versent.com.au
+username                = user@example.com
 provider                = KeyCloak
 ...
 kc_auth_error_element   = span.kc-feedback-text
@@ -729,7 +707,7 @@ If your KeyCloak server returns a different error message depending on an authen
 ```
 [default]
 url                     = https://id.customer.cloud
-username                = user@versent.com.au
+username                = user@example.com
 provider                = KeyCloak
 ...
 kc_auth_error_message   = "Invalid username or password.|Account is disabled, contact your administrator."
@@ -739,7 +717,7 @@ kc_auth_error_message   = "Invalid username or password.|Account is disabled, co
 
 ### macOS
 
-To build this software on macOS, clone the repo to `$GOPATH/src/github.com/versent/saml2aws` and ensure you have `$GOPATH/bin` in your `$PATH`. You will also need [GoReleaser](https://github.com/goreleaser/goreleaser) installed.
+To build this software on macOS, clone the repo to `$GOPATH/src/github.com/AdrianAcala/saml2aws` and ensure you have `$GOPATH/bin` in your `$PATH`. You will also need [GoReleaser](https://github.com/goreleaser/goreleaser) installed.
 
 ```
 make mod
