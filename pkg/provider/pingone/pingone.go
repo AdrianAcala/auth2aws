@@ -100,6 +100,9 @@ func (ac *Client) follow(ctx context.Context, req *http.Request) (string, error)
 	} else if docIsFormSelectDevice(doc) {
 		logger.WithField("type", "select-device").Debug("doc detect")
 		handler = ac.handleFormSelectDevice
+	} else if docIsFormDeviceProfiling(doc) {
+		logger.WithField("type", "device-profiling").Debug("doc detect")
+		handler = ac.handleFormDeviceProfiling
 	} else if docIsOTP(doc) {
 		logger.WithField("type", "otp").Debug("doc detect")
 		handler = ac.handleOTP
@@ -273,6 +276,23 @@ func (ac *Client) handleFormSelectDevice(ctx context.Context, doc *goquery.Docum
 	return ctx, req, err
 }
 
+func (ac *Client) handleFormDeviceProfiling(ctx context.Context, doc *goquery.Document, res *http.Response) (context.Context, *http.Request, error) {
+	form, err := page.NewFormFromDocument(doc, "form#device-profile-form")
+	if err != nil {
+		return ctx, nil, errors.Wrap(err, "error extracting redirect form")
+	}
+
+	actionURL, err := url.Parse(form.URL)
+	if err != nil {
+		return ctx, nil, err
+	}
+	form.URL = res.Request.URL.ResolveReference(actionURL).String()
+
+	req, err := form.BuildRequest()
+
+	return ctx, req, err
+}
+
 func docIsLogin(doc *goquery.Document) bool {
 	return doc.Has("input[name=\"pf.pass\"]").Size() == 1
 }
@@ -299,6 +319,10 @@ func docIsFormSamlRequest(doc *goquery.Document) bool {
 
 func docIsFormResume(doc *goquery.Document) bool {
 	return doc.Find("input[name=\"RelayState\"]").Size() == 1 || doc.Find("input[name=\"Resume\"]").Size() == 1
+}
+
+func docIsFormDeviceProfiling(doc *goquery.Document) bool {
+	return doc.Find("form#device-profile-form[action]").Size() == 1
 }
 
 func docIsFormRedirectToTarget(doc *goquery.Document, target string) bool {
