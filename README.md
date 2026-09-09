@@ -22,8 +22,10 @@ been released upstream, including:
 - refreshed dependencies and CI coverage.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete fork-specific change history.
-The Go module path remains `github.com/versent/saml2aws/v2` for compatibility
-with the upstream project.
+The canonical Go module path is now `github.com/AdrianAcala/saml2aws/v2`.
+Existing users and integrators should follow the
+[migration guide](doc/migration-from-versent.md) when moving from the upstream
+namespace.
 
 ## How it works
 

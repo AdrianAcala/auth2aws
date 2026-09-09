@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/sirupsen/logrus"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/pkg/errors"
 	"github.com/tidwall/gjson"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/provider"
 
 	"encoding/json"
 )

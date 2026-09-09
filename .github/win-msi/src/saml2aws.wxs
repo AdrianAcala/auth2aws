@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-    <Product Id="*" UpgradeCode="042c301c-5154-4a77-9438-a01d4d2a9dd4" Version="$(var.Saml2AwsVer)" Language="1033" Name="saml2aws" Manufacturer="Versent">
+    <Product Id="*" UpgradeCode="042c301c-5154-4a77-9438-a01d4d2a9dd4" Version="$(var.Saml2AwsVer)" Language="1033" Name="saml2aws" Manufacturer="AdrianAcala">
         <Package InstallerVersion="300" Compressed="yes" Description="!(bind.property.ProductName) !(bind.property.ProductVersion)" Platform="x64"/>
         <Media Id="1" Cabinet="saml2aws.cab" EmbedCab="yes" />
 
         <!-- Step 1: Define the directory structure -->
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="ProgramFiles64Folder">
-                <Directory Id="APPLICATIONROOTDIRECTORY" Name="Versent"/>
+                <Directory Id="APPLICATIONROOTDIRECTORY" Name="AdrianAcala"/>
             </Directory>
         </Directory>
 

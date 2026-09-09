@@ -5,15 +5,15 @@
   <metadata>
     <id>saml2aws</id>
     <version>$version$</version>
-    <packageSourceUrl>https://github.com/Versent/saml2aws</packageSourceUrl>
+    <packageSourceUrl>https://github.com/AdrianAcala/saml2aws</packageSourceUrl>
     <!-- owners is a poor name for maintainers of the package. It sticks around by this name for compatibility reasons. It basically means you. -->
-    <owners>Versent, https://github.com/Versent</owners>
+    <owners>AdrianAcala</owners>
     <title>saml2aws (Install)</title>
-    <authors>Versent, https://github.com/Versent</authors>
-    <projectUrl>https://github.com/Versent/saml2aws</projectUrl>
-    <licenseUrl>https://github.com/versent/saml2aws/blob/master/LICENSE.md</licenseUrl>
+    <authors>Versent contributors</authors>
+    <projectUrl>https://github.com/AdrianAcala/saml2aws</projectUrl>
+    <licenseUrl>https://github.com/AdrianAcala/saml2aws/blob/main/LICENSE.md</licenseUrl>
     <requireLicenseAcceptance>true</requireLicenseAcceptance>
-    <projectSourceUrl>https://github.com/Versent/saml2aws</projectSourceUrl>
+    <projectSourceUrl>https://github.com/AdrianAcala/saml2aws</projectSourceUrl>
     <tags>saml2aws admin aws saml CLI</tags>
     <summary>CLI tool which enables you to login and retrieve AWS temporary credentials using a SAML IDP</summary>
     <description>CLI tool which enables you to login and retrieve Amazon Web Services / AWS temporary credentials using a SAML IDP</description>

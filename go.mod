@@ -1,4 +1,4 @@
-module github.com/versent/saml2aws/v2
+module github.com/AdrianAcala/saml2aws/v2
 
 go 1.22
 

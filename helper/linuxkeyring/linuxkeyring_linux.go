@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 
 	"github.com/99designs/keyring"
+	"github.com/AdrianAcala/saml2aws/v2/helper/credentials"
 	"github.com/sirupsen/logrus"
-	"github.com/versent/saml2aws/v2/helper/credentials"
 )
 
 var logger = logrus.WithField("helper", "linuxkeyring")

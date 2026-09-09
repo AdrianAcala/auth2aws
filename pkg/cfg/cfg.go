@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
 	ini "gopkg.in/ini.v1"
 )
 

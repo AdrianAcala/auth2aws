@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/versent/saml2aws/v2/pkg/awsconfig"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/flags"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/awsconfig"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
 )
 
 // BuildEnvVars build an array of env vars in the format required for exec

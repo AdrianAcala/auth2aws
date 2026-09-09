@@ -11,14 +11,14 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
 	"github.com/beevik/etree"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
-	"github.com/versent/saml2aws/v2/pkg/creds"
-	"github.com/versent/saml2aws/v2/pkg/prompter"
-	"github.com/versent/saml2aws/v2/pkg/provider"
 )
 
 const SAML_SUCCESS = "urn:oasis:names:tc:SAML:2.0:status:Success"

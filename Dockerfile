@@ -1,4 +1,4 @@
-ARG BASE_IMAGE_ARCH=static-debian11
-FROM gcr.io/distroless/$BASE_IMAGE_ARCH
-COPY saml2aws /
+FROM gcr.io/distroless/static-debian11
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/saml2aws /
 ENTRYPOINT ["/saml2aws"]

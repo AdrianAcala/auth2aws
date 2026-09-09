@@ -7,9 +7,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/awsconfig"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
 	"github.com/pkg/errors"
-	"github.com/versent/saml2aws/v2/pkg/awsconfig"
-	"github.com/versent/saml2aws/v2/pkg/flags"
 )
 
 const bashTmpl = `export AWS_ACCESS_KEY_ID={{ .AWSAccessKey }}

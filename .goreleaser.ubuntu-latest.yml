@@ -24,6 +24,9 @@ builds:
       goamd64: v1
       env:
         - CGO_ENABLED=0
+  ignore:
+    - goos: windows
+      goarch: arm
 archives:
   - formats: [tar.gz]
     wrap_in_directory: false

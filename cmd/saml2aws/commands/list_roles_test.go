@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	saml2aws "github.com/AdrianAcala/saml2aws/v2"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	saml2aws "github.com/versent/saml2aws/v2"
-	"github.com/versent/saml2aws/v2/pkg/flags"
 )
 
 // captureStdout replaces os.Stdout with a pipe for the duration of fn, then

@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/page"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/require"
-	"github.com/versent/saml2aws/v2/pkg/page"
 )
 
 func TestIsSAMLResponsePositive(t *testing.T) {

@@ -205,7 +205,7 @@ saml2aws exec -a production -- env | grep AWS
 ```
 
 [1]: https://jumpcloud.com/
-[2]: https://github.com/Versent/saml2aws
+[2]: https://github.com/AdrianAcala/saml2aws
 [3]: https://support.jumpcloud.com/customer/portal/articles/2384088-single-sign-on-sso-with-amazon-iam
 [4]: https://jumpcloud.desk.com/customer/en/portal/articles/2775691#authorize#certs
 [5]: https://keybase.io/blog/encrypted-git-for-everyone

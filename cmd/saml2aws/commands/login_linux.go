@@ -3,9 +3,9 @@ package commands
 import (
 	"os"
 
-	"github.com/versent/saml2aws/v2/helper/credentials"
-	"github.com/versent/saml2aws/v2/helper/linuxkeyring"
-	"github.com/versent/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/helper/credentials"
+	"github.com/AdrianAcala/saml2aws/v2/helper/linuxkeyring"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
 )
 
 func init() {

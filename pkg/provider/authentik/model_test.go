@@ -3,8 +3,8 @@ package authentik
 import (
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/stretchr/testify/assert"
-	"github.com/versent/saml2aws/v2/pkg/creds"
 )
 
 func Test_updateURL(t *testing.T) {

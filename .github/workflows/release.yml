@@ -55,7 +55,8 @@ jobs:
 
       - name: Add Lowercase Repository Name to Environment
         run: |
-          echo REPOSITORY_NAME_LOWERCASE=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]') >> $GITHUB_ENV
+          repository_name_lowercase=$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          echo "REPOSITORY_NAME_LOWERCASE=$repository_name_lowercase" >> "$GITHUB_ENV"
 
       - uses: "docker/login-action@v3"
         if: matrix.os == 'ubuntu-22.04'
@@ -94,14 +95,16 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] ; then
               VER=${INPUT_TAG}
           else
-              VER=${GITHUB_REF/refs\/tags\//}
+              VER=${GITHUB_REF#refs/tags/}
           fi
 
-          VERSION=${VER//v}
+          VERSION=${VER#v}
 
-          echo "VER_TAG=$VER" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "ASSET=saml2aws_${VERSION}_windows_amd64.zip" >> $GITHUB_ENV
+          {
+            echo "VER_TAG=$VER"
+            echo "VERSION=$VERSION"
+            echo "ASSET=saml2aws_${VERSION}_windows_amd64.zip"
+          } >> "$GITHUB_ENV"
 
       - name: Check out code
         uses: actions/checkout@v4
@@ -126,7 +129,7 @@ jobs:
           # container does not run as root
           chmod -R o+rw "${INSTALLER}"
 
-          cat "${INSTALLER}/wix.sh" | docker run --rm -i -e VERSION -v "${INSTALLER}:/wix" ${WIXIMG} /bin/sh
+          docker run --rm -i -e VERSION -v "${INSTALLER}:/wix" "${WIXIMG}" /bin/sh < "${INSTALLER}/wix.sh"
 
       - name: Upload the asset to the release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v0.2.2.1.2.2.15 / v2.2.1
@@ -152,13 +155,15 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] ; then
               VER=${INPUT_TAG}
           else
-              VER=${GITHUB_REF/refs\/tags\//}
+              VER=${GITHUB_REF#refs/tags/}
           fi
 
-          VERSION=${VER//v}
+          VERSION=${VER#v}
 
-          echo "VER_TAG=$VER" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          {
+            echo "VER_TAG=$VER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
 
       - name: Check out code
         uses: actions/checkout@v4

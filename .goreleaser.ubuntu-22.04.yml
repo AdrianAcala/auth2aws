@@ -60,37 +60,13 @@ archives:
     name_template: "{{ .ProjectName }}_static_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
-dockers:
-  - id: amd64
-    goos: linux
-    goarch: amd64
-    use: buildx
-    ids:
-    - saml2aws-static
-    image_templates:
-      - ghcr.io/{{ .Env.IMAGE_NAME }}:{{ .Version }}-amd64
-      - ghcr.io/{{ .Env.IMAGE_NAME }}:latest-amd64
-    build_flag_templates:
-        - "--build-arg=BASE_IMAGE_ARCH=static-debian11"
-        - "--platform=linux/amd64"
-  - id: arm64
-    goos: linux
-    goarch: arm64
-    use: buildx
-    ids:
-    - saml2aws-static
-    image_templates:
-      - ghcr.io/{{ .Env.IMAGE_NAME }}:{{ .Version }}-arm64
-      - ghcr.io/{{ .Env.IMAGE_NAME }}:latest-arm64
-    build_flag_templates:
-        - "--build-arg=BASE_IMAGE_ARCH=static:latest-arm64"
-        - "--platform=linux/arm64"
-docker_manifests:
-  - name_template: ghcr.io/{{ .Env.IMAGE_NAME }}:{{ .Version }}
-    image_templates:
-    - ghcr.io/{{ .Env.IMAGE_NAME }}:{{ .Version }}-amd64
-    - ghcr.io/{{ .Env.IMAGE_NAME }}:{{ .Version }}-arm64
-  - name_template: ghcr.io/{{ .Env.IMAGE_NAME }}:latest
-    image_templates:
-    - ghcr.io/{{ .Env.IMAGE_NAME }}:latest-amd64
-    - ghcr.io/{{ .Env.IMAGE_NAME }}:latest-arm64
+dockers_v2:
+  - ids: [saml2aws-static]
+    images:
+      - ghcr.io/{{ .Env.IMAGE_NAME }}
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64

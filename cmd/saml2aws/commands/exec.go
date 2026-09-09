@@ -6,14 +6,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/awsconfig"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/shell"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/pkg/errors"
-	"github.com/versent/saml2aws/v2/pkg/awsconfig"
-	"github.com/versent/saml2aws/v2/pkg/flags"
-	"github.com/versent/saml2aws/v2/pkg/shell"
 )
 
 // Exec execute the supplied command after seeding the environment
