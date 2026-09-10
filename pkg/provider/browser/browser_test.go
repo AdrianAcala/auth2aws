@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,8 +45,7 @@ func TestValidate(t *testing.T) {
 	client, err := New(account)
 	assert.Nil(t, err)
 	loginDetails := &creds.LoginDetails{
-		URL:             "https://google.com/",
-		DownloadBrowser: true,
+		URL: "https://google.com/",
 	}
 	resp, err := client.Authenticate(loginDetails)
 	assert.Nil(t, err)
@@ -63,8 +64,7 @@ func TestInvalidBrowserType(t *testing.T) {
 	client, err := New(account)
 	assert.Nil(t, err)
 	loginDetails := &creds.LoginDetails{
-		URL:             "https://google.com/",
-		DownloadBrowser: true,
+		URL: "https://google.com/",
 	}
 	_, err = client.Authenticate(loginDetails)
 	assert.Error(t, err)
@@ -105,7 +105,7 @@ func TestNoBrowserDriverFail(t *testing.T) {
 	assert.ErrorContains(t, err, "please install the driver")
 }
 
-func fakeSAMLResponse(page playwright.Page, loginDetails *creds.LoginDetails, client *Client) (string, error) {
+func fakeSAMLResponse(page responsePage, loginDetails *creds.LoginDetails, client *Client) (string, error) {
 	return response, nil
 }
 
@@ -224,6 +224,58 @@ func TestExpectRequestOptionsDefaultTimeout(t *testing.T) {
 	if *options.Timeout != DEFAULT_TIMEOUT {
 		t.Errorf("Unexpected value for timeout [%.0f]: expected [%.0f]", *options.Timeout, DEFAULT_TIMEOUT)
 	}
+}
+
+func TestValidateRequiresURL(t *testing.T) {
+	client, err := New(&cfg.IDPAccount{})
+	require.NoError(t, err)
+
+	assert.EqualError(t, client.Validate(&creds.LoginDetails{}), "empty URL")
+	assert.NoError(t, client.Validate(&creds.LoginDetails{URL: "https://idp.example/login"}))
+}
+
+func TestGetSAMLResponseReturnsInterceptedRequestTimeout(t *testing.T) {
+	page := &mocks.Page{}
+	client, err := New(&cfg.IDPAccount{Timeout: 45000})
+	require.NoError(t, err)
+	page.Mock.On("OnRequest", mock.Anything).Return()
+	page.Mock.On("Goto", "https://idp.example/login", mock.Anything).Return(nil, nil)
+	page.Mock.On("ExpectRequest", mock.Anything, mock.Anything, client.expectRequestTimeout()).Return(nil, errors.New("request timed out"))
+
+	_, err = getSAMLResponse(page, &creds.LoginDetails{URL: "https://idp.example/login"}, client)
+
+	assert.EqualError(t, err, "request timed out")
+}
+
+func TestGetSAMLResponseReturnsNavigationError(t *testing.T) {
+	page := &mocks.Page{}
+	client, err := New(&cfg.IDPAccount{})
+	require.NoError(t, err)
+	navigationErr := errors.New("navigation failed")
+
+	page.Mock.On("OnRequest", mock.Anything).Return()
+	page.Mock.On("Goto", "https://idp.example/login", mock.Anything).Return(nil, navigationErr)
+
+	_, err = getSAMLResponse(page, &creds.LoginDetails{URL: "https://idp.example/login"}, client)
+
+	assert.ErrorIs(t, err, navigationErr)
+}
+
+func TestGetSAMLResponseReturnsRequestTimeout(t *testing.T) {
+	page := &mocks.Page{}
+	client, err := New(&cfg.IDPAccount{Timeout: 45000})
+	require.NoError(t, err)
+	timeoutErr := errors.New("request timed out")
+	regex, err := signinRegex()
+	require.NoError(t, err)
+
+	page.Mock.On("OnRequest", mock.Anything).Return()
+	page.Mock.On("Goto", "https://idp.example/login", mock.Anything).Return(nil, nil)
+	page.Mock.On("ExpectRequest", regex, mock.Anything, client.expectRequestTimeout()).Return(nil, timeoutErr)
+
+	_, err = getSAMLResponse(page, &creds.LoginDetails{URL: "https://idp.example/login"}, client)
+
+	assert.ErrorIs(t, err, timeoutErr)
 }
 
 func TestAutoFill(t *testing.T) {

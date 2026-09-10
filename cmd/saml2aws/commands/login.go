@@ -25,6 +25,22 @@ import (
 
 // Login login to ADFS
 func Login(loginFlags *flags.LoginExecFlags) error {
+	return login(loginFlags, loginDependencies{
+		newSAMLClient:      saml2aws.NewSAMLClient,
+		saveIDPCredentials: credentials.SaveCredentials,
+		selectAWSRole:      selectAwsRole,
+		loginToSTS:         loginToStsUsingRole,
+	})
+}
+
+type loginDependencies struct {
+	newSAMLClient      func(*cfg.IDPAccount) (saml2aws.SAMLClient, error)
+	saveIDPCredentials func(string, string, string) error
+	selectAWSRole      func(string, *cfg.IDPAccount) (*saml2aws.AWSRole, error)
+	loginToSTS         func(*cfg.IDPAccount, *saml2aws.AWSRole, string) (*awsconfig.AWSCredentials, error)
+}
+
+func login(loginFlags *flags.LoginExecFlags, deps loginDependencies) error {
 	logger := logrus.WithField("command", "login")
 
 	account, err := buildIdpAccount(loginFlags)
@@ -70,13 +86,12 @@ func Login(loginFlags *flags.LoginExecFlags) error {
 
 	loginDetails, err := resolveLoginDetails(account, loginFlags)
 	if err != nil {
-		log.Printf("%+v", err)
-		os.Exit(1)
+		return errors.Wrap(err, "Error resolving login details.")
 	}
 
 	logger.WithField("idpAccount", account).Debug("building provider")
 
-	provider, err := saml2aws.NewSAMLClient(account)
+	provider, err := deps.newSAMLClient(account)
 	if err != nil {
 		return errors.Wrap(err, "Error building IdP client.")
 	}
@@ -116,27 +131,24 @@ func Login(loginFlags *flags.LoginExecFlags) error {
 	}
 
 	if samlAssertion == "" {
-		log.Println("Response did not contain a valid SAML assertion.")
-		log.Println("Please check that your username and password is correct.")
-		log.Println("To see the output follow the instructions in https://github.com/AdrianAcala/saml2aws#debugging-issues-with-idps")
-		os.Exit(1)
+		return errors.New("response did not contain a valid SAML assertion; please check that the username and password are correct")
 	}
 
 	if !loginFlags.CommonFlags.DisableKeychain {
-		err = credentials.SaveCredentials(loginDetails.URL, loginDetails.Username, loginDetails.Password)
+		err = deps.saveIDPCredentials(loginDetails.URL, loginDetails.Username, loginDetails.Password)
 		if err != nil {
 			return errors.Wrap(err, "Error storing password in keychain.")
 		}
 	}
 
-	role, err := selectAwsRole(samlAssertion, account)
+	role, err := deps.selectAWSRole(samlAssertion, account)
 	if err != nil {
 		return errors.Wrap(err, "Failed to assume role. Please check whether you are permitted to assume the given role for the AWS service.")
 	}
 
 	log.Println("Selected role:", role.RoleARN)
 
-	awsCreds, err := loginToStsUsingRole(account, role, samlAssertion)
+	awsCreds, err := deps.loginToSTS(account, role, samlAssertion)
 	if err != nil {
 		return errors.Wrap(err, "Error logging into AWS role using SAML assertion.")
 	}
@@ -295,9 +307,7 @@ func selectAwsRole(samlAssertion string, account *cfg.IDPAccount) (*saml2aws.AWS
 	}
 
 	if len(roles) == 0 {
-		log.Println("No roles to assume.")
-		log.Println("Please check you are permitted to assume roles for the AWS service.")
-		os.Exit(1)
+		return nil, errors.New("no roles to assume; please check that the account is permitted to assume roles for the AWS service")
 	}
 
 	awsRoles, err := saml2aws.ParseAWSRoles(roles)
@@ -365,7 +375,14 @@ func loginToStsUsingRole(account *cfg.IDPAccount, role *saml2aws.AWSRole, samlAs
 		return nil, errors.Wrap(err, "Failed to create session.")
 	}
 
-	svc := sts.New(sess)
+	return loginToStsUsingRoleWithClient(account, role, samlAssertion, sts.New(sess))
+}
+
+type assumeRoleWithSAMLClient interface {
+	AssumeRoleWithSAML(*sts.AssumeRoleWithSAMLInput) (*sts.AssumeRoleWithSAMLOutput, error)
+}
+
+func loginToStsUsingRoleWithClient(account *cfg.IDPAccount, role *saml2aws.AWSRole, samlAssertion string, svc assumeRoleWithSAMLClient) (*awsconfig.AWSCredentials, error) {
 
 	params := &sts.AssumeRoleWithSAMLInput{
 		PrincipalArn:    aws.String(role.PrincipalARN), // Required
@@ -385,7 +402,10 @@ func loginToStsUsingRole(account *cfg.IDPAccount, role *saml2aws.AWSRole, samlAs
 	if account.PolicyARNs != "" {
 		var arns []*sts.PolicyDescriptorType
 		for _, arn := range strings.Split(account.PolicyARNs, ",") {
-			arns = append(arns, &sts.PolicyDescriptorType{Arn: aws.String(arn)})
+			arn = strings.TrimSpace(arn)
+			if arn != "" {
+				arns = append(arns, &sts.PolicyDescriptorType{Arn: aws.String(arn)})
+			}
 		}
 		params.PolicyArns = arns
 	}
@@ -395,6 +415,9 @@ func loginToStsUsingRole(account *cfg.IDPAccount, role *saml2aws.AWSRole, samlAs
 	resp, err := svc.AssumeRoleWithSAML(params)
 	if err != nil {
 		return nil, errors.Wrap(err, "Error retrieving STS credentials using SAML.")
+	}
+	if resp == nil || resp.Credentials == nil || resp.Credentials.Expiration == nil || resp.AssumedRoleUser == nil {
+		return nil, errors.New("STS response did not contain credentials and assumed role information")
 	}
 
 	return &awsconfig.AWSCredentials{

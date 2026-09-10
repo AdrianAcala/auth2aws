@@ -4,9 +4,9 @@ import (
 	b64 "encoding/base64"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	saml2aws "github.com/AdrianAcala/saml2aws/v2"
@@ -93,6 +93,11 @@ func (p *SAMLCacheProvider) IsValid() bool {
 }
 
 func locateCacheFile(account string) (string, error) {
+	// Account names become part of a filename. Reject separators so an
+	// account cannot escape the cache directory through path traversal.
+	if strings.ContainsAny(account, `/\\`) || strings.ContainsRune(account, '\x00') {
+		return "", ErrInvalidCachePath
+	}
 
 	var name, filename string
 	var err error
@@ -102,9 +107,9 @@ func locateCacheFile(account string) (string, error) {
 		filename = fmt.Sprintf("cache_%s", account)
 	}
 	if runtime.GOOS == "windows" {
-		name = path.Join(os.Getenv("USERPROFILE"), ".aws", SAMLCacheDir, filename)
+		name = filepath.Join(os.Getenv("USERPROFILE"), ".aws", SAMLCacheDir, filename)
 	} else {
-		name, err = homedir.Expand(path.Join("~", ".aws", SAMLCacheDir, filename))
+		name, err = homedir.Expand(filepath.Join("~", ".aws", SAMLCacheDir, filename))
 		if err != nil {
 			return "", ErrInvalidCachePath
 		}
@@ -161,7 +166,7 @@ func (p *SAMLCacheProvider) WriteRaw(samlAssertion string) error {
 	}
 
 	// create the directory if it doesn't exist
-	err = os.MkdirAll(path.Dir(cache_path), SAMLCacheDirPermissions)
+	err = os.MkdirAll(filepath.Dir(cache_path), SAMLCacheDirPermissions)
 	if err != nil {
 		return errors.Wrap(err, "Could not write the cache file directory")
 	}

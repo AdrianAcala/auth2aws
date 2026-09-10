@@ -144,6 +144,9 @@ func (c *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error) 
 	logger.Debug("SAML Assertion response body:", resp)
 
 	authMessage := gjson.Get(resp, "message").String()
+	if !gjson.Valid(resp) {
+		return "", errors.New("invalid SAML assertion response")
+	}
 	if res.StatusCode != 200 {
 		return "", fmt.Errorf("HTTP %v: %s", res.StatusCode, authMessage)
 	}
@@ -153,7 +156,7 @@ func (c *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error) 
 	switch authMessage {
 	// MFA not required
 	case MessageSuccess:
-		if authData.IsArray() {
+		if authData.IsArray() || !authData.Exists() || authData.String() == "" {
 			return "", errors.New("invalid SAML assertion returned")
 		}
 		samlAssertion = authData.String()
@@ -192,7 +195,18 @@ func generateToken(oc *Client, loginDetails *creds.LoginDetails, host string) (s
 	}
 	defer res.Body.Close()
 
-	return gjson.Get(string(body), "access_token").String(), nil
+	resp := string(body)
+	if !gjson.Valid(resp) {
+		return "", errors.New("invalid oauth token response")
+	}
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %v: %s", res.StatusCode, gjson.Get(resp, "message").String())
+	}
+	token := gjson.Get(resp, "access_token").String()
+	if token == "" {
+		return "", errors.New("oauth token missing from response")
+	}
+	return token, nil
 }
 
 func addAuthHeader(r *http.Request, oauthToken string) {

@@ -3,15 +3,33 @@ package auth0
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
 )
+
+type auth0RoundTripper func(*http.Request) (*http.Response, error)
+
+func (f auth0RoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func auth0TestResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+		Request:    nil,
+	}
+}
 
 const testSAMLFormHTMLFmt = `<html><head><title>test</title></head><body>
 	<form method="post" name="hiddenform" action="%s">
@@ -30,6 +48,86 @@ func newTestProviderHTTPClientHelper(t *testing.T) *Client {
 	return &Client{
 		ValidateBase: provider.ValidateBase{},
 		client:       httpClient,
+	}
+}
+
+func TestClient_Authenticate(t *testing.T) {
+	jsonStr := `{"state":"StateToken","_csrf":"CSRFToken"}`
+	sessionBody := fmt.Sprintf("window.atob('%s')", base64.StdEncoding.EncodeToString([]byte(jsonStr)))
+	connectionsBody := `Auth0.setClient({"strategies":[{"connections":[{"name":"connection-name"}]}]});`
+	loginForm := `<form method="post" action="https://tenant.auth0.com/saml/callback"><input name="code" value="auth-code"></form>`
+	samlForm := fmt.Sprintf(testSAMLFormHTMLFmt, "https://signin.aws.amazon.com/saml", "SAMLBase64Encoded")
+	loginDetails := &creds.LoginDetails{
+		Username: "user@example.com",
+		Password: "password",
+		URL:      "https://tenant.auth0.com/samlp/client_id",
+	}
+
+	tests := []struct {
+		name    string
+		mode    string
+		url     string
+		want    string
+		wantErr bool
+	}{
+		{name: "complete authentication", want: "SAMLBase64Encoded"},
+		{name: "invalid Auth0 URL", url: "https://example.com/login", wantErr: true},
+		{name: "connection request HTTP error", mode: "connection-http-error", wantErr: true},
+		{name: "session request HTTP error", mode: "session-http-error", wantErr: true},
+		{name: "login request HTTP error", mode: "login-http-error", wantErr: true},
+		{name: "malformed login response", mode: "malformed-login", wantErr: true},
+		{name: "callback request HTTP error", mode: "callback-http-error", wantErr: true},
+		{name: "callback response missing SAML assertion", mode: "missing-saml", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ac := newTestProviderHTTPClientHelper(t)
+			ac.client.Transport = auth0RoundTripper(func(r *http.Request) (*http.Response, error) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.String() == "https://cdn.auth0.com/client/client_id.js":
+					if tt.mode == "connection-http-error" {
+						return auth0TestResponse(http.StatusBadGateway, "connection unavailable"), nil
+					}
+					return auth0TestResponse(http.StatusOK, connectionsBody), nil
+				case r.Method == http.MethodGet && r.URL.String() == loginDetails.URL:
+					if tt.mode == "session-http-error" {
+						return auth0TestResponse(http.StatusBadGateway, "session unavailable"), nil
+					}
+					return auth0TestResponse(http.StatusOK, sessionBody), nil
+				case r.Method == http.MethodPost && r.URL.String() == "https://tenant.auth0.com/usernamepassword/login":
+					if tt.mode == "login-http-error" {
+						return auth0TestResponse(http.StatusUnauthorized, "login rejected"), nil
+					}
+					if tt.mode == "malformed-login" {
+						return auth0TestResponse(http.StatusOK, "not an HTML form"), nil
+					}
+					return auth0TestResponse(http.StatusOK, loginForm), nil
+				case r.Method == http.MethodPost && r.URL.String() == "https://tenant.auth0.com/saml/callback":
+					if tt.mode == "callback-http-error" {
+						return auth0TestResponse(http.StatusBadGateway, "callback unavailable"), nil
+					}
+					if tt.mode == "missing-saml" {
+						return auth0TestResponse(http.StatusOK, `<form><input name="RelayState" value=""></form>`), nil
+					}
+					return auth0TestResponse(http.StatusOK, samlForm), nil
+				default:
+					return auth0TestResponse(http.StatusNotFound, "unexpected request"), nil
+				}
+			})
+
+			args := *loginDetails
+			if tt.url != "" {
+				args.URL = tt.url
+			}
+			got, err := ac.Authenticate(&args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Authenticate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("Authenticate() got = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

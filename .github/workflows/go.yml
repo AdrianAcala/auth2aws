@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request_target:
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -18,16 +18,15 @@ env:
   GOFLAGS: -mod=readonly
 
 jobs:
-  test:
-    name: Test
-    runs-on: saml2aws-builder
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Check out code under test
+      - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -35,8 +34,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test
-        run: go test -coverprofile=coverage.out ./...
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev libudev-dev
+          go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0 install --with-deps chromium
+
+      - name: Test with coverage and race detection
+        run: go test -race -count=1 -timeout=10m -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Require coverage floor
+        run: scripts/check-coverage.sh coverage.out 50.0
 
       - name: Upload coverage
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -46,22 +54,50 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  lint:
-    name: Lint
-    runs-on: saml2aws-builder
-    timeout-minutes: 15
+  test-native:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
     steps:
-      - name: Check out code under test
+      - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Install Playwright test browser
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0 install chromium
+
+      - name: Run tests
+        run: go test -count=1 -timeout=10m ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Install Linux lint dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@d583c34f0599d37dbac4a198b9c83201be380893 # v9.3.0
@@ -71,7 +107,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
-    runs-on: saml2aws-builder
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -92,11 +128,10 @@ jobs:
           - goos: windows
             goarch: arm64
     steps:
-      - name: Check out code under test
+      - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -128,3 +163,23 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [test-linux, test-native, lint, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every pull request check
+        env:
+          TEST_LINUX: ${{ needs.test-linux.result }}
+          TEST_NATIVE: ${{ needs.test-native.result }}
+          LINT: ${{ needs.lint.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          for result in "$TEST_LINUX" "$TEST_NATIVE" "$LINT" "$BUILD"; do
+            if [[ "$result" != "success" ]]; then
+              echo "A required CI job did not succeed: $result" >&2
+              exit 1
+            fi
+          done

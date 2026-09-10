@@ -319,6 +319,151 @@ func TestVerifyMfa_Email(t *testing.T) {
 	})
 }
 
+func TestVerifyMfaPushRejectedAndTimedOut(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		factorResult string
+		expectedErr  string
+	}{
+		{name: "rejected", factorResult: "REJECTED", expectedErr: "MFA rejected by user"},
+		{name: "timed out", factorResult: "TIMEOUT", expectedErr: "User did not accept MFA in time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/verify", r.URL.Path)
+				_, err := fmt.Fprintf(w, `{
+					"stateToken":"state-secret",
+					"status":"MFA_CHALLENGE",
+					"factorResult":%q
+				}`, tc.factorResult)
+				assert.NoError(t, err)
+			}))
+			defer ts.Close()
+
+			oc, _ := setupTestClient(t, ts, "PUSH")
+			_, err := verifyMfa(oc, "", &creds.LoginDetails{}, fmt.Sprintf(`{
+			"stateToken":"state-secret",
+			"_embedded":{"factors":[{"id":"PUSH","provider":"OKTA","factorType":"PUSH",
+			"_links":{"verify":{"href":%q}}}]}
+		}`, ts.URL+"/verify"))
+			if assert.EqualError(t, err, tc.expectedErr) {
+				assert.NotContains(t, err.Error(), "state-secret")
+			}
+		})
+	}
+}
+
+func TestGetMfaChallengeContextRejectsMalformedOrUnsupportedResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		err  string
+	}{
+		{name: "missing verify link", body: `{"stateToken":"state" ,"_embedded":{"factors":[{"id":"PUSH","provider":"OKTA","factorType":"PUSH"}]}}`, err: `error retrieving verify response: Post "?rememberDevice=true": unsupported protocol scheme ""`},
+		{name: "unsupported factor", body: `{"stateToken":"state" ,"_embedded":{"factors":[{"id":"factor","provider":"ACME","factorType":"magic"}]}}`, err: "unsupported mfa provider"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"ignored":true}`))
+			}))
+			defer ts.Close()
+			oc, _ := setupTestClient(t, ts, "AUTO")
+			_, err := getMfaChallengeContext(oc, 0, strings.Replace(tc.body, `"href":`, fmt.Sprintf(`"href":%q, "unused":`, ts.URL), 1))
+			assert.EqualError(t, err, tc.err)
+			assert.NotContains(t, err.Error(), "state")
+		})
+	}
+}
+
+func TestAuthenticateSuccessEndToEnd(t *testing.T) {
+	const password = "password-secret"
+	const sessionToken = "session-secret"
+	const samlResponse = "PHNhbWw6UmVzcG9uc2U+PC9zYW1sOlJlc3BvbnNlPg=="
+
+	var ts *httptest.Server
+	ts = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/authn":
+			var request AuthRequest
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+			assert.Equal(t, "user@example.com", request.Username)
+			assert.Equal(t, password, request.Password)
+			_, _ = fmt.Fprintf(w, `{"status":"SUCCESS","sessionToken":%q}`, sessionToken)
+		case "/login/sessionCookieRedirect":
+			assert.Equal(t, sessionToken, r.URL.Query().Get("token"))
+			_, _ = fmt.Fprintf(w, `<form action="%s"><input name="SAMLResponse" value="%s"></form>`, ts.URL+"/target", samlResponse)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	account := cfg.NewIDPAccount()
+	account.URL = ts.URL
+	account.TargetURL = ts.URL + "/target"
+	account.Username = "user@example.com"
+	account.SkipVerify = true
+	account.DisableSessions = true
+	oc, err := New(account)
+	assert.NoError(t, err)
+
+	credentialHelper := mocks.NewHelper(t)
+	credentialHelper.On("Get", ts.URL+"/deviceToken").Return("", "", credentials.ErrCredentialsNotFound).Once()
+	credentialHelper.On("Add", mock.MatchedBy(func(saved *credentials.Credentials) bool {
+		return saved.ServerURL == ts.URL+"/deviceToken" && saved.Username == account.Username && saved.Secret != password && saved.Secret != sessionToken
+	})).Return(nil).Once()
+	previousHelper := credentials.CurrentHelper
+	credentials.CurrentHelper = credentialHelper
+	t.Cleanup(func() { credentials.CurrentHelper = previousHelper })
+
+	saml, err := oc.Authenticate(&creds.LoginDetails{URL: ts.URL, Username: account.Username, Password: password})
+	assert.NoError(t, err)
+	assert.Equal(t, samlResponse, saml)
+	assert.NotContains(t, saml, password)
+	assert.NotContains(t, saml, sessionToken)
+}
+
+func TestCreateSessionHTTPStatusErrorsDoNotExposeSessionToken(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		statusCode int
+		expected   string
+	}{
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, expected: "unable to create an Okta session, invalid sessionToken"},
+		{name: "server error", statusCode: http.StatusInternalServerError, expected: "unable to create an Okta session, HTTP Code: 500"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/sessions", r.URL.Path)
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(`{"error":"session-secret"}`))
+			}))
+			defer ts.Close()
+			oc, loginDetails := setupTestClient(t, ts, "AUTO")
+			_, _, err := oc.createSession(loginDetails, "session-secret")
+			if assert.EqualError(t, err, tc.expected) {
+				assert.NotContains(t, err.Error(), "session-secret")
+			}
+		})
+	}
+}
+
+func TestValidateSessionStatusErrors(t *testing.T) {
+	assert.EqualError(t, (&Client{}).validateSession(nil), "unable to validate the okta session, nil input")
+
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/sessions/me", r.URL.Path)
+		http.Error(w, `{"error":"session-secret"}`, http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+	oc, loginDetails := setupTestClient(t, ts, "AUTO")
+	loginDetails.OktaSessionCookie = "sid-secret"
+	err := oc.validateSession(loginDetails)
+	assert.EqualError(t, err, "invalid okta session")
+	assert.NotContains(t, err.Error(), "sid-secret")
+}
+
 func TestVerifyMfa_Duo(t *testing.T) {
 	t.Run("Duo Push", func(t *testing.T) {
 		ts := setupTestDuoHttpServer(t, "Duo Push")

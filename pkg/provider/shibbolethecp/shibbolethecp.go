@@ -108,16 +108,15 @@ func (c *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error) 
 	}
 
 	res, err := c.client.Do(req)
+	if err != nil {
+		return "", errors.Wrap(err, "Sending initial SOAP authnRequest")
+	}
 	defer func() {
 		_ = res.Body.Close()
 	}()
 
-	if err != nil {
-		return "", errors.Wrap(err, "Sending initial SOAP authnRequest")
-	}
-
 	if res.StatusCode != 200 {
-		return "", errors.Wrapf(err, "Response code from IDP at %s: %s", res.Status, res.Request.URL)
+		return "", errors.Errorf("Response code from IDP at %s: %s", res.Status, res.Request.URL)
 	}
 
 	bodyBytes, _ := io.ReadAll(res.Body)
@@ -201,6 +200,9 @@ func extractAssertion(body io.Reader) (string, error) {
 	responseElement := root.FindElement("//saml2p:Response")
 	if responseElement == nil {
 		return "", errors.New("Unable to find Response element in IdP response by XML path")
+	}
+	if responseElement.FindElement(".//saml2:Assertion") == nil {
+		return "", errors.New("Unable to find Assertion element in IdP response by XML path")
 	}
 
 	// then pull everything from the Response element down into a string to return

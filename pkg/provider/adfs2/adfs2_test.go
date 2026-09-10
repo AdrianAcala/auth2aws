@@ -12,6 +12,7 @@ import (
 	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestADFS2RSA(t *testing.T) {
@@ -66,4 +67,96 @@ func TestADFS2RSA(t *testing.T) {
 	resp, err := ac.Authenticate(loginDetails)
 	assert.Nil(t, err)
 	assert.Equal(t, resp, "saml1")
+}
+
+func TestADFS2AuthenticateAutoUsesNTLMFlow(t *testing.T) {
+	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/adfs/ls/IdpInitiatedSignOn.aspx" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`<html><input name="SAMLResponse" value="ntlm-saml"></html>`))
+	}))
+	defer svr.Close()
+
+	account := cfg.NewIDPAccount()
+	account.URL = svr.URL
+	account.MFA = "Auto"
+	account.Username = "user@example.com"
+	client, err := New(account)
+	require.NoError(t, err)
+
+	assertion, err := client.Authenticate(&creds.LoginDetails{
+		Username: account.Username,
+		Password: "password",
+		URL:      account.URL,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ntlm-saml", assertion)
+}
+
+func TestADFS2AuthenticateMalformedFormsAndAssertions(t *testing.T) {
+	tests := []struct {
+		name      string
+		mfa       string
+		response  string
+		wantInErr string
+	}{
+		{name: "RSA missing form", mfa: "RSA", response: `<html>not an authentication form</html>`, wantInErr: "error extracting login data"},
+		{name: "Auto missing assertion", mfa: "Auto", response: `<html><form action="/login"></form></html>`, wantInErr: "SAML assertion"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.response))
+			}))
+			defer svr.Close()
+
+			account := cfg.NewIDPAccount()
+			account.URL = svr.URL
+			account.MFA = tc.mfa
+			account.Username = "user@example.com"
+			client, err := New(account)
+			require.NoError(t, err)
+
+			_, err = client.Authenticate(&creds.LoginDetails{
+				Username: account.Username,
+				Password: "password",
+				URL:      account.URL,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantInErr)
+		})
+	}
+}
+
+func TestADFS2AuthenticateHTTPError(t *testing.T) {
+	svr := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := svr.URL
+	svr.Close()
+
+	account := cfg.NewIDPAccount()
+	account.URL = url
+	account.MFA = "Auto"
+	client, err := New(account)
+	require.NoError(t, err)
+
+	_, err = client.Authenticate(&creds.LoginDetails{URL: url})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "error retieving login form")
+}
+
+func TestADFS2AuthenticateTLSError(t *testing.T) {
+	svr := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer svr.Close()
+
+	account := cfg.NewIDPAccount()
+	account.URL = svr.URL
+	account.MFA = "Auto"
+	client, err := New(account)
+	require.NoError(t, err)
+
+	_, err = client.Authenticate(&creds.LoginDetails{URL: svr.URL})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "x509")
 }

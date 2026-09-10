@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"io"
 	"log"
 	"net/http"
@@ -11,10 +12,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/AdrianAcala/saml2aws/v2/mocks"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
@@ -231,4 +234,121 @@ func TestHandleWebAuthn(t *testing.T) {
 
 	s := string(b[:])
 	require.Contains(t, s, "isWebAuthnSupportedByBrowser=false")
+}
+
+func newPingFedTestClient(t *testing.T, handler http.Handler, targetURL string) (*Client, *httptest.Server) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	account := &cfg.IDPAccount{
+		AmazonWebservicesURN: "urn:test:aws",
+		TargetURL:            targetURL,
+		HttpAttemptsCount:    "invalid",
+	}
+	client, err := New(account)
+	require.NoError(t, err)
+	return client, ts
+}
+
+func TestAuthenticatePasswordAndSAMLWithRedirect(t *testing.T) {
+	const assertion = "pingfed-saml-assertion"
+	encodedAssertion := base64.StdEncoding.EncodeToString([]byte(assertion))
+	var requests []string
+	var loginForm url.Values
+	var targetURL string
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/idp/startSSO.ping":
+			require.Equal(t, "urn:test:aws", r.URL.Query().Get("PartnerSpId"))
+			http.Redirect(w, r, "/login", http.StatusFound)
+		case "/login":
+			_, _ = w.Write([]byte(`<form action="/login/submit" method="post"><input name="pf.username"><input name="pf.pass"></form>`))
+		case "/login/submit":
+			require.NoError(t, r.ParseForm())
+			loginForm = r.Form
+			_, _ = w.Write([]byte(`<form action="` + targetURL + `" method="post"><input name="SAMLResponse" value="` + encodedAssertion + `"></form>`))
+		case "/saml":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, encodedAssertion, r.Form.Get("SAMLResponse"))
+			_, _ = w.Write([]byte("unexpected extra request"))
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	})
+
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	targetURL = ts.URL + "/saml"
+	account := &cfg.IDPAccount{AmazonWebservicesURN: "urn:test:aws", TargetURL: targetURL, HttpAttemptsCount: "invalid"}
+	client, err := New(account)
+	require.NoError(t, err)
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL, Username: "alice", Password: "secret"})
+	require.NoError(t, err)
+	require.Equal(t, encodedAssertion, got)
+	require.Equal(t, []string{"GET /idp/startSSO.ping", "GET /login", "POST /login/submit"}, requests)
+	require.Equal(t, "alice", loginForm.Get("pf.username"))
+	require.Equal(t, "secret", loginForm.Get("pf.pass"))
+}
+
+func TestFollowRefreshWithoutLoginContext(t *testing.T) {
+	client, ts := newPingFedTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<meta http-equiv="refresh" content="0;url=/start">`))
+	}), "")
+	req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+
+	got, err := client.follow(context.Background(), req)
+	require.Empty(t, got)
+	require.EqualError(t, err, "no context value for login")
+}
+
+func TestHandleFormSelectDeviceMissingForm(t *testing.T) {
+	pr := &mocks.Prompter{}
+	pr.On("Choose", "Select which MFA Device to use", []string{}).Return(0)
+	originalPrompter := prompter.ActivePrompter
+	prompter.SetPrompter(pr)
+	t.Cleanup(func() { prompter.SetPrompter(originalPrompter) })
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(`<form name="device-form"></form>`))
+	require.NoError(t, err)
+
+	client := Client{}
+	_, req, err := client.handleFormSelectDevice(context.Background(), doc, &url.URL{Scheme: "https", Host: "idp.example"})
+	require.Nil(t, req)
+	require.ErrorContains(t, err, "error extracting select device form")
+}
+
+func TestAuthenticateUnknownPage(t *testing.T) {
+	client, ts := newPingFedTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><p>unexpected page</p></body></html>`))
+	}), "")
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL})
+	require.Empty(t, got)
+	require.EqualError(t, err, "Unknown document type")
+}
+
+func TestAuthenticateMalformedSAMLResponse(t *testing.T) {
+	client, ts := newPingFedTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<form action="https://signin.aws.amazon.com/saml"><input name="SAMLResponse" value="%%%invalid%%"></form>`))
+	}), "")
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL})
+	require.Empty(t, got)
+	require.ErrorContains(t, err, "failed to decode saml-response")
+}
+
+func TestAuthenticateHTTPError(t *testing.T) {
+	client, ts := newPingFedTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+	}), "")
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL})
+	require.Empty(t, got)
+	require.ErrorContains(t, err, "error following")
+	require.ErrorContains(t, err, "502 Bad Gateway")
 }

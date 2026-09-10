@@ -28,7 +28,7 @@ jobs:
       REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - name: Check out the pull request branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
@@ -65,7 +65,7 @@ jobs:
       MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
     steps:
       - name: Check out the merged release
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.merge_commit_sha }}

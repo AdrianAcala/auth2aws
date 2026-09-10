@@ -3,12 +3,17 @@ package pingone
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"reflect"
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/require"
 )
@@ -101,4 +106,128 @@ func TestFindDeviceMap(t *testing.T) {
 			t.Errorf("expected deviceMap %v to be %v", deviceMap, tt.expected)
 		}
 	}
+}
+
+type pingOneTestPrompter struct {
+	token  string
+	device string
+}
+
+func (p pingOneTestPrompter) RequestSecurityCode(string) string { return p.token }
+func (p pingOneTestPrompter) ChooseWithDefault(string, string, []string) (string, error) {
+	return p.device, nil
+}
+func (p pingOneTestPrompter) Choose(_ string, options []string) int {
+	for i, option := range options {
+		if option == p.device {
+			return i
+		}
+	}
+	return -1
+}
+func (p pingOneTestPrompter) StringRequired(string) string { return p.token }
+func (p pingOneTestPrompter) String(string, string) string { return p.token }
+func (p pingOneTestPrompter) Password(string) string       { return p.token }
+func (p pingOneTestPrompter) Display(string)               {}
+
+func newPingOneTestClient(t *testing.T, handler http.Handler, targetURL string) (*Client, *httptest.Server) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	account := &cfg.IDPAccount{TargetURL: targetURL, HttpAttemptsCount: "invalid"}
+	client, err := New(account)
+	require.NoError(t, err)
+	return client, ts
+}
+
+func TestAuthenticateFullFlowWithDeviceAndOTP(t *testing.T) {
+	const assertion = "pingone-saml-assertion"
+	encodedAssertion := base64.StdEncoding.EncodeToString([]byte(assertion))
+	var requests []string
+	var loginForm url.Values
+	var webAuthnForm url.Values
+	var deviceForm url.Values
+	var otpForm url.Values
+	var targetURL string
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		base := "http://" + r.Host
+		switch len(requests) {
+		case 1:
+			require.Equal(t, http.MethodGet, r.Method)
+			targetURL = "http://" + r.Host + "/saml"
+			_, _ = w.Write([]byte(`<form action="` + base + `/login" method="post"><input name="pf.username"><input name="pf.pass"></form>`))
+		case 2:
+			require.NoError(t, r.ParseForm())
+			loginForm = r.Form
+			_, _ = w.Write([]byte(`<form action="` + base + `/webauthn" method="post"><input name="isWebAuthnSupportedByBrowser" value="true"></form>`))
+		case 3:
+			require.NoError(t, r.ParseForm())
+			webAuthnForm = r.Form
+			_, _ = w.Write([]byte(`<form name="device-form" action="` + base + `/device" method="post"><ul class="device-list"><li data-id="phone-id"><a><div class="device-name">Phone</div></a></li><li data-id="tablet-id"><a><div class="device-name">Tablet</div></a></li></ul></form>`))
+		case 4:
+			require.NoError(t, r.ParseForm())
+			deviceForm = r.Form
+			_, _ = w.Write([]byte(`<form id="otp-form" action="` + base + `/otp" method="post"><input name="otp"></form>`))
+		case 5:
+			require.NoError(t, r.ParseForm())
+			otpForm = r.Form
+			_, _ = w.Write([]byte(`<form action="` + targetURL + `" method="post"><input name="SAMLResponse" value="` + encodedAssertion + `"></form>`))
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	})
+
+	// The target action is discovered from the first request's URL, so construct the
+	// client after the server exists and update its account target for the final page.
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	account := &cfg.IDPAccount{TargetURL: ts.URL + "/saml", HttpAttemptsCount: "invalid"}
+	client, err := New(account)
+	require.NoError(t, err)
+	originalPrompter := prompter.ActivePrompter
+	prompter.SetPrompter(pingOneTestPrompter{token: "123456", device: "Tablet"})
+	t.Cleanup(func() { prompter.SetPrompter(originalPrompter) })
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start", Username: "alice", Password: "secret"})
+	require.NoError(t, err)
+	require.Equal(t, encodedAssertion, got)
+	require.Equal(t, []string{"GET /start", "POST /login", "POST /webauthn", "POST /device", "POST /otp"}, requests)
+	require.Equal(t, "alice", loginForm.Get("pf.username"))
+	require.Equal(t, "secret", loginForm.Get("pf.pass"))
+	require.Equal(t, "false", webAuthnForm.Get("isWebAuthnSupportedByBrowser"))
+	require.Equal(t, "tablet-id", deviceForm.Get("deviceId"))
+	require.Equal(t, "123456", otpForm.Get("otp"))
+}
+
+func TestAuthenticateUnknownPage(t *testing.T) {
+	client, ts := newPingOneTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><p>unexpected page</p></body></html>`))
+	}), "")
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL})
+	require.Empty(t, got)
+	require.EqualError(t, err, "Unknown document type")
+}
+
+func TestAuthenticateMalformedSAMLResponse(t *testing.T) {
+	client, ts := newPingOneTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<form action="https://signin.aws.amazon.com/saml"><input name="SAMLResponse" value="%%%invalid%%"></form>`))
+	}), "")
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL})
+	require.Empty(t, got)
+	require.ErrorContains(t, err, "failed to decode saml-response")
+}
+
+func TestAuthenticateHTTPError(t *testing.T) {
+	client, ts := newPingOneTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+	}), "")
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL})
+	require.Empty(t, got)
+	require.ErrorContains(t, err, "error following")
+	require.ErrorContains(t, err, "502 Bad Gateway")
 }

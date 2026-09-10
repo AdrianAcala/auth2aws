@@ -41,6 +41,7 @@ func New(idpAccount *cfg.IDPAccount) (*Client, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "error building http client")
 	}
+	client.CheckResponseStatus = provider.SuccessOrRedirectResponseValidator
 
 	return &Client{
 		client:     client,
@@ -56,7 +57,11 @@ func (sc *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 
 	shibbolethURL := fmt.Sprintf("%s/idp/profile/SAML2/Unsolicited/SSO?providerId=%s", loginDetails.URL, sc.idpAccount.AmazonWebservicesURN)
 
-	res, err := sc.client.Get(shibbolethURL)
+	getReq, err := http.NewRequest(http.MethodGet, shibbolethURL, nil)
+	if err != nil {
+		return samlAssertion, errors.Wrap(err, "error building form request")
+	}
+	res, err := sc.client.Do(getReq)
 	if err != nil {
 		return samlAssertion, errors.Wrap(err, "error retrieving form")
 	}
@@ -213,7 +218,7 @@ func verifyDuoMfa(oc *Client, loginDetails *creds.LoginDetails, duoHost string, 
 	duoTxCookie, ok := doc.Find("input[name=\"js_cookie\"]").Attr("value")
 	if ok {
 		if duoTxCookie == "" {
-			return "", errors.Wrap(err, "duoMfaBypass: invalid response cookie")
+			return "", errors.New("duoMfaBypass: invalid response cookie")
 		}
 		return duoTxCookie, nil
 	}
@@ -221,7 +226,7 @@ func verifyDuoMfa(oc *Client, loginDetails *creds.LoginDetails, duoHost string, 
 	// Duo cookie not found - continue with full MFA transaction
 	duoSID, ok := doc.Find("input[name=\"sid\"]").Attr("value")
 	if !ok {
-		return "", errors.Wrap(err, "unable to locate saml response")
+		return "", errors.New("unable to locate Duo session id")
 	}
 	duoSID = html.UnescapeString(duoSID)
 
@@ -287,7 +292,7 @@ func verifyDuoMfa(oc *Client, loginDetails *creds.LoginDetails, duoHost string, 
 	duoTxStat := gjson.Get(resp, "stat").String()
 	duoTxID := gjson.Get(resp, "response.txid").String()
 	if duoTxStat != "OK" {
-		return "", errors.Wrap(err, "error authenticating mfa device")
+		return "", errors.Errorf("error authenticating mfa device: Duo status %q", duoTxStat)
 	}
 
 	// get duo cookie
@@ -351,7 +356,7 @@ func verifyDuoMfa(oc *Client, loginDetails *creds.LoginDetails, duoHost string, 
 			log.Println(gjson.Get(resp, "response.status").String())
 
 			if duoTxResult == "FAILURE" {
-				return "", errors.Wrap(err, "failed to authenticate device")
+				return "", errors.New("failed to authenticate device")
 			}
 
 			if duoTxResult == "SUCCESS" {
@@ -382,7 +387,7 @@ func verifyDuoMfa(oc *Client, loginDetails *creds.LoginDetails, duoHost string, 
 
 	duoTxCookie = gjson.Get(resp, "response.cookie").String()
 	if duoTxCookie == "" {
-		return "", errors.Wrap(err, "duoResultSubmit: Unable to get response.cookie")
+		return "", errors.New("duoResultSubmit: Unable to get response.cookie")
 	}
 
 	return duoTxCookie, nil
@@ -405,7 +410,13 @@ func parseTokens(blob string) (string, string, string, string, string) {
 		csrfToken = csrfTokenMatch[1]
 	}
 
+	if len(dataSigRequest) < 2 || len(duoHost) < 2 || len(postAction) < 2 {
+		return "", "", "", "", csrfToken
+	}
 	duoSignatures := strings.Split(dataSigRequest[1], ":")
+	if len(duoSignatures) < 2 {
+		return "", "", "", "", csrfToken
+	}
 	return duoHost[1], postAction[1], duoSignatures[0], duoSignatures[1], csrfToken
 }
 
@@ -417,5 +428,8 @@ func extractSamlResponse(res *http.Response) (string, error) {
 
 	samlRgx := regexp.MustCompile(`name=\"SAMLResponse\" value=\"(.*?)\"/>`)
 	samlResponseValue := samlRgx.FindStringSubmatch(string(body))
+	if len(samlResponseValue) < 2 {
+		return "", errors.New("unable to locate SAMLResponse")
+	}
 	return samlResponseValue[1], nil
 }
