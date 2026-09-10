@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -264,7 +265,9 @@ func TestClientTimeoutAndCancellation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = hc.Do(req)
 	require.Error(t, err)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	var timeoutErr net.Error
+	require.ErrorAs(t, err, &timeoutErr)
+	require.True(t, timeoutErr.Timeout())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

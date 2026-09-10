@@ -349,14 +349,16 @@ func TestOneLoginMFAPollTimeout(t *testing.T) {
 			_, _ = w.Write([]byte(`{"message":"MFA is required for this user","state_token":"state","devices":[{"device_type":"OneLogin Protect","device_id":"device"}]}`))
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(time.Second)
 	}))
 	defer svr.Close()
 	account := cfg.NewIDPAccount()
 	account.URL, account.MFA, account.SkipVerify = svr.URL, "OLP", true
 	oc, err := onelogin.New(account)
 	require.NoError(t, err)
-	oc.Client.Timeout = 10 * time.Millisecond
+	// Leave enough time for the initial TLS handshake on slower CI runners while
+	// still forcing the MFA verification request to time out.
+	oc.Client.Timeout = 250 * time.Millisecond
 	_, err = oc.Authenticate(&creds.LoginDetails{URL: svr.URL})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error retrieving verify response")
