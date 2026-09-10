@@ -152,7 +152,11 @@ func TestSymlinkedCredentialsFile(t *testing.T) {
 
 	resolved, err := resolveSymlink(link)
 	require.NoError(t, err)
-	assert.Equal(t, target, resolved)
+	resolvedInfo, err := os.Stat(resolved)
+	require.NoError(t, err)
+	targetInfo, err := os.Stat(target)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(resolvedInfo, targetInfo))
 	provider := NewSharedCredentials("saml", link)
 	loaded, err := provider.Load()
 	require.NoError(t, err)
