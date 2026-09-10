@@ -45,10 +45,7 @@ install:
 .PHONY: install
 
 build:
-
-ifndef GORELEASER
-    $(error "goreleaser is not available please install and ensure it is on PATH")
-endif
+	@command -v goreleaser >/dev/null 2>&1 || { echo "goreleaser is not available; install it and ensure it is on PATH" >&2; exit 1; }
 	goreleaser build --snapshot --clean --config $(CONFIG_FILE)
 .PHONY: build
 
