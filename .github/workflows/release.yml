@@ -21,6 +21,108 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test-release-source:
+    name: Test release source (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+
+      - name: Run release-source tests
+        run: go test -count=1 -timeout=10m ./...
+
+      - name: Run race detector
+        if: runner.os == 'Linux'
+        run: go test -race -count=1 -timeout=10m ./...
+
+  validate:
+    name: Validate release configuration
+    needs: [test-release-source]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate GoReleaser configurations
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.1.0
+        with:
+          version: v2.12.7
+          args: check --config .goreleaser.ubuntu-latest.yml
+
+      - name: Validate macOS release configuration
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.1.0
+        with:
+          version: v2.12.7
+          args: check --config .goreleaser.macos-latest.yml
+
+      - name: Validate Linux release configuration
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.1.0
+        with:
+          version: v2.12.7
+          args: check --config .goreleaser.ubuntu-22.04.yml
+
+      - name: Build snapshot artifacts
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.1.0
+        with:
+          version: v2.12.7
+          args: release --snapshot --clean --skip=publish --config .goreleaser.ubuntu-latest.yml
+
+      - name: Smoke check snapshot artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          artifacts=(dist/*.zip dist/*.tar.gz)
+          if (( ${#artifacts[@]} == 0 )); then
+            echo "GoReleaser produced no archive artifacts." >&2
+            exit 1
+          fi
+          binary=dist/saml2aws_linux_amd64_v1/saml2aws
+          if [[ ! -x "$binary" ]]; then
+            echo "GoReleaser produced no runnable Linux amd64 binary." >&2
+            exit 1
+          fi
+          scripts/release-smoke-test.sh --binary "$binary" "${artifacts[@]}"
+
+      - name: Upload snapshot artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-snapshot-${{ github.run_id }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: release
     strategy:
@@ -33,19 +135,22 @@ jobs:
           - ubuntu-22.04
           - macos-latest
     runs-on: ${{ matrix.os }}
-    if: github.event_name != 'workflow_dispatch' || inputs.publish
+    needs: [validate]
+    if: >-
+      needs.validate.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish)
     permissions:
       contents: write
       packages: write
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Set up Go 1.x
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: "go.mod"
 
@@ -58,7 +163,7 @@ jobs:
           repository_name_lowercase=$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
           echo "REPOSITORY_NAME_LOWERCASE=$repository_name_lowercase" >> "$GITHUB_ENV"
 
-      - uses: "docker/login-action@v3"
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.4.0
         if: matrix.os == 'ubuntu-22.04'
         with:
           registry: "ghcr.io"
@@ -66,9 +171,9 @@ jobs:
           password: "${{ secrets.GITHUB_TOKEN }}"
 
       - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.1.0
         with:
-          version: "~> v2"
+          version: v2.12.7
           args: release --clean --config .goreleaser.${{ matrix.os }}.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,9 +184,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [release]
+    needs: [validate, release]
     if: >- # https://github.com/actions/runner/issues/491
       always() &&
+      needs.validate.result == 'success' &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
     env:
       INSTALLER: ${{ github.workspace }}/.github/win-msi
@@ -107,7 +213,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -142,9 +248,10 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-    needs: [release]
+    needs: [validate, release]
     if: >- # https://github.com/actions/runner/issues/491
       always() &&
+      needs.validate.result == 'success' &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
     steps:
       - name: Normalize tag values
@@ -166,13 +273,13 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Setup PowerShell module cache
         id: cacher
-        uses: actions/cache@v4
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4.1.2
         with:
           path: "C:\\Users\\runneradmin\\Documents\\PowerShell\\Modules"
           key: ${{ runner.os }}-InvokeBuild

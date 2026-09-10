@@ -139,3 +139,66 @@ func TestBuildTmplEnv(t *testing.T) {
 	}
 
 }
+
+func TestBuildTmplPowerShell(t *testing.T) {
+	data := struct {
+		ProfileName string
+		*awsconfig.AWSCredentials
+	}{
+		"test_profile",
+		&awsconfig.AWSCredentials{
+			AWSSecretKey:     "secret_key",
+			AWSAccessKey:     "access_key",
+			AWSSessionToken:  "session_token",
+			AWSSecurityToken: "security_token",
+			Expires:          time.Date(2026, time.January, 2, 3, 4, 5, 0, time.FixedZone("PST", -8*60*60)),
+		},
+	}
+
+	st, err := buildTmpl("powershell", data)
+	assert.NoError(t, err)
+	assert.Equal(t, "$env:AWS_ACCESS_KEY_ID='access_key'\n"+
+		"$env:AWS_SECRET_ACCESS_KEY='secret_key'\n"+
+		"$env:AWS_SESSION_TOKEN='session_token'\n"+
+		"$env:AWS_SECURITY_TOKEN='security_token'\n"+
+		"$env:SAML2AWS_PROFILE='test_profile'\n"+
+		"$env:AWS_CREDENTIAL_EXPIRATION='2026-01-02T03:04:05-08:00'\n", st)
+}
+
+func TestBuildTmplPreservesSpecialCharacters(t *testing.T) {
+	data := struct {
+		ProfileName string
+		*awsconfig.AWSCredentials
+	}{
+		"profile with spaces;$HOME/'quotes'",
+		&awsconfig.AWSCredentials{
+			AWSSecretKey:     "secret with spaces;$HOME/'quotes'",
+			AWSAccessKey:     "access;$(echo escaped)",
+			AWSSessionToken:  "token=with=shell&special|chars",
+			AWSSecurityToken: "security\twith\ttabs",
+			Expires:          time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC),
+		},
+	}
+
+	for _, shell := range []string{"bash", "/bin/sh", "fish", "env", "powershell"} {
+		st, err := buildTmpl(shell, data)
+		assert.NoError(t, err, shell)
+		assert.Contains(t, st, data.AWSAccessKey, shell)
+		assert.Contains(t, st, data.AWSSecretKey, shell)
+		assert.Contains(t, st, data.AWSSessionToken, shell)
+		assert.Contains(t, st, data.AWSSecurityToken, shell)
+		assert.Contains(t, st, data.ProfileName, shell)
+	}
+}
+
+func TestBuildTmplExecutionError(t *testing.T) {
+	st, err := buildTmpl("bash", struct{}{})
+	assert.Error(t, err)
+	assert.Equal(t, "export AWS_ACCESS_KEY_ID=", st)
+}
+
+func TestBuildTmplUnsupportedShell(t *testing.T) {
+	st, err := buildTmpl("unsupported", struct{}{})
+	assert.Error(t, err)
+	assert.Empty(t, st)
+}

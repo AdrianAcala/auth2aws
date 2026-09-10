@@ -277,3 +277,152 @@ func TestExtractDevicePushExtraNumber(t *testing.T) {
 		require.Equal(t, "", extractDevicePushExtraNumber(doc2))
 	}
 }
+
+func newTestGoogleClient(ts *httptest.Server) *Client {
+	return &Client{client: &provider.HTTPClient{
+		Client:  *ts.Client(),
+		Options: &provider.HTTPClientOptions{IsWithRetries: false},
+	}}
+}
+
+func TestAuthenticateSuccess(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			require.Equal(t, http.MethodGet, r.Method)
+			_, _ = w.Write([]byte(`<form id="gaia_loginform" action="/identifier"><input name="continue" value="continue"></form>`))
+		case 2:
+			require.Equal(t, http.MethodPost, r.Method)
+			require.Equal(t, "test@example.com", r.FormValue("Email"))
+			_, _ = w.Write([]byte(`<form id="gaia_loginform" action="/password"><input name="Email" value="test@example.com"><input name="challengeId" value="1"></form>`))
+		case 3:
+			require.Equal(t, http.MethodPost, r.Method)
+			require.Equal(t, "secret", r.FormValue("Passwd"))
+			_, _ = w.Write([]byte(`<input name="SAMLResponse" value="saml-assertion">`))
+		default:
+			require.Fail(t, "unexpected request")
+		}
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	assertion, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start?flow=1", Username: "test@example.com", Password: "secret"})
+	require.NoError(t, err)
+	require.Equal(t, "saml-assertion", assertion)
+	require.Equal(t, 3, calls)
+}
+
+func TestAuthenticateWrongPassword(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			_, _ = w.Write([]byte(`<form id="gaia_loginform" action="/identifier"></form>`))
+		case 2:
+			_, _ = w.Write([]byte(`<form id="gaia_loginform" action="/password"></form>`))
+		case 3:
+			_, _ = w.Write([]byte(`<span class="error-msg">Wrong password</span>`))
+		default:
+			require.Fail(t, "unexpected request")
+		}
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	_, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start?flow=1", Username: "test@example.com", Password: "bad"})
+	require.EqualError(t, err, "error loading challenge page: Invalid username or password")
+}
+
+func TestAuthenticateMalformedFirstPage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body>not a login form</body></html>`))
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	_, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start?flow=1", Username: "test@example.com", Password: "secret"})
+	require.EqualError(t, err, "error loading first page: failed to build login form data: could not find any forms")
+}
+
+func TestAuthenticateHTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	kc.client.CheckResponseStatus = provider.SuccessOrRedirectResponseValidator
+	_, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start?flow=1", Username: "test@example.com", Password: "secret"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "error loading first page")
+	require.Contains(t, err.Error(), "failed status: 502 Bad Gateway")
+}
+
+func TestAuthenticateRedirectError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/other", http.StatusFound)
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	kc.client.DisableFollowRedirect()
+	kc.client.CheckResponseStatus = provider.SuccessOrRedirectResponseValidator
+	_, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start?flow=1", Username: "test@example.com", Password: "secret"})
+	require.EqualError(t, err, "error loading first page: failed to build login form data: could not find any forms")
+}
+
+func TestLoadChallengePageTOTP(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			_, _ = w.Write([]byte(`<h2>This extra step shows it’s really you trying to sign in</h2><form id="challenge" action="/challenge/totp"><input name="challengeId" value="7"></form>`))
+			return
+		}
+		require.Equal(t, "654321", r.FormValue("Pin"))
+		_, _ = w.Write([]byte(`<input name="SAMLResponse" value="totp-ok">`))
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	doc, err := kc.loadChallengePage(ts.URL+"/password", ts.URL+"/identifier", url.Values{}, &creds.LoginDetails{MFAToken: "654321"})
+	require.NoError(t, err)
+	require.Equal(t, "totp-ok", mustFindInputByName(doc, "SAMLResponse"))
+	require.Equal(t, 2, calls)
+}
+
+func TestLoadChallengePagePushEOF(t *testing.T) {
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	_ = w.Close()
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin; _ = r.Close() }()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<h1>2-Step Verification</h1><form id="challenge" action="/challenge/dp"><input name="challengeId" value="7"></form>`))
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	_, err = kc.loadChallengePage(ts.URL+"/password", ts.URL+"/identifier", url.Values{}, &creds.LoginDetails{})
+	require.EqualError(t, err, "error reading new line \\n: EOF")
+}
+
+func TestLoadChallengePageUnsupportedWebAuthn(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/password" {
+			_, _ = w.Write([]byte(`<h1>2-Step Verification</h1><form id="challenge" action="/challenge/webauthn"><input name="challengeId" value="7"></form><form action="/challenge/skip"><input name="continue" value="yes"></form>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><body>no supported factor</body></html>`))
+	}))
+	defer ts.Close()
+
+	kc := newTestGoogleClient(ts)
+	_, err := kc.loadChallengePage(ts.URL+"/password", ts.URL+"/identifier", url.Values{}, &creds.LoginDetails{})
+	require.EqualError(t, err, "unable to find supported second factor")
+}

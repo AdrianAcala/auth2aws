@@ -72,11 +72,16 @@ func mockAWSSignIn(t *testing.T) {
 	t.Helper()
 	samlHTML, err := os.ReadFile("../../../testdata/saml.html")
 	require.NoError(t, err)
+	mockAWSSignInHTML(t, string(samlHTML))
+}
+
+func mockAWSSignInHTML(t *testing.T, samlHTML string) {
+	t.Helper()
 
 	gock.New("https://signin.aws.amazon.com").
 		Post("/saml").
 		Reply(200).
-		BodyString(string(samlHTML))
+		BodyString(samlHTML)
 }
 
 func TestListRolesTextOutput(t *testing.T) {
@@ -216,4 +221,107 @@ func TestListRolesReturnsErrorWhenNoRoles(t *testing.T) {
 	err := listRoles([]*saml2aws.AWSRole{}, "", loginFlags)
 
 	assert.ErrorContains(t, err, "no roles available")
+}
+
+func TestListRolesReturnsErrorWhenAssertionIsNotBase64(t *testing.T) {
+	loginFlags := &flags.LoginExecFlags{
+		CommonFlags: &flags.CommonFlags{},
+	}
+
+	err := listRoles(awsRolesForSAMLHTML(), "not base64", loginFlags)
+
+	assert.ErrorContains(t, err, "error decoding saml assertion")
+}
+
+func TestListRolesReturnsErrorWhenAssertionHasNoDestination(t *testing.T) {
+	loginFlags := &flags.LoginExecFlags{
+		CommonFlags: &flags.CommonFlags{},
+	}
+	assertion := b64.StdEncoding.EncodeToString([]byte("<Assertion></Assertion>"))
+
+	err := listRoles(awsRolesForSAMLHTML(), assertion, loginFlags)
+
+	assert.ErrorContains(t, err, "error parsing destination url")
+}
+
+func TestListRolesReturnsErrorWhenAWSRolePageCannotBeRetrieved(t *testing.T) {
+	defer gock.Off()
+	gock.New("https://signin.aws.amazon.com").
+		Post("/saml").
+		ReplyError(io.ErrUnexpectedEOF)
+
+	loginFlags := &flags.LoginExecFlags{
+		CommonFlags: &flags.CommonFlags{},
+	}
+
+	err := listRoles(awsRolesForSAMLHTML(), samlAssertionFixture(t), loginFlags)
+
+	assert.ErrorContains(t, err, "error parsing aws role accounts")
+	assert.ErrorContains(t, err, "error retrieving AWS login form")
+}
+
+func TestListRolesJSONEscapesAccountAndRoleText(t *testing.T) {
+	defer gock.Off()
+	roleARN := "arn:aws:iam::000000000003:role/ReadOnly"
+	mockAWSSignInHTML(t, `<!doctype html><fieldset>
+<div class="saml-account">
+  <div class="saml-account-name">Account: A&amp;B &lt;team&gt; (000000000003)</div>
+  <label for="`+roleARN+`">Read &lt;Only&gt;</label>
+</div>
+</fieldset>`)
+
+	loginFlags := &flags.LoginExecFlags{
+		CommonFlags: &flags.CommonFlags{},
+		JSON:        true,
+	}
+	output := captureStdout(t, func() {
+		err := listRoles([]*saml2aws.AWSRole{{RoleARN: roleARN, PrincipalARN: "arn:aws:iam::000000000003:saml-provider/idp"}}, samlAssertionFixture(t), loginFlags)
+		require.NoError(t, err)
+	})
+
+	var accounts []struct {
+		Name  string `json:"Name"`
+		Roles []struct {
+			Name string `json:"Name"`
+		} `json:"Roles"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &accounts))
+	require.Len(t, accounts, 1)
+	assert.Equal(t, "Account: A&B <team> (000000000003)", accounts[0].Name)
+	require.Len(t, accounts[0].Roles, 1)
+	assert.Equal(t, "Read <Only>", accounts[0].Roles[0].Name)
+	assert.Contains(t, output, `\u0026`)
+	assert.Contains(t, output, `\u003c`)
+}
+
+func TestListRolesIgnoresDuplicateInputRolesAndPreservesAWSOrder(t *testing.T) {
+	defer gock.Off()
+	mockAWSSignIn(t)
+
+	awsRoles := awsRolesForSAMLHTML()
+	awsRoles = append(awsRoles, awsRoles[0])
+	loginFlags := &flags.LoginExecFlags{
+		CommonFlags: &flags.CommonFlags{},
+		JSON:        true,
+	}
+	output := captureStdout(t, func() {
+		err := listRoles(awsRoles, samlAssertionFixture(t), loginFlags)
+		require.NoError(t, err)
+	})
+
+	var accounts []struct {
+		AccountNumber string `json:"AccountNumber"`
+		Roles         []struct {
+			RoleARN string `json:"RoleARN"`
+		} `json:"Roles"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &accounts))
+	require.Len(t, accounts, 2)
+	assert.Equal(t, "000000000001", accounts[0].AccountNumber)
+	assert.Equal(t, "000000000002", accounts[1].AccountNumber)
+	assert.Equal(t, []string{
+		"arn:aws:iam::000000000001:role/Development",
+		"arn:aws:iam::000000000001:role/Production",
+	}, []string{accounts[0].Roles[0].RoleARN, accounts[0].Roles[1].RoleARN})
+	assert.Len(t, accounts[0].Roles, 2)
 }

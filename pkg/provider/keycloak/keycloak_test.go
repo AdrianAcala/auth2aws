@@ -2,10 +2,13 @@ package keycloak
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
@@ -21,6 +24,157 @@ import (
 const (
 	exampleLoginURL = "https://id.example.com/auth/realms/master/login-actions/authenticate?code=G5PSj-AJ7mC2wRS5yOA5NEGZ7BO97Y0_qUkS5zInmhQ&execution=e0c4f6fe-6f9a-435e-a7ff-d61eb2456d58&client_id=urn%3Aamazon%3Awebservices"
 )
+
+func testKeycloakClient() *Client {
+	validator, _ := CustomizeAuthErrorValidator(&cfg.IDPAccount{})
+	return &Client{client: &provider.HTTPClient{
+		Client:  http.Client{},
+		Options: &provider.HTTPClientOptions{IsWithRetries: false},
+	}, authErrorValidator: validator}
+}
+
+func TestClient_Authenticate(t *testing.T) {
+	assertion, err := os.ReadFile("example/assertion.html")
+	require.NoError(t, err)
+
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = io.WriteString(w, `<form action="`+ts.URL+`/login" method="post"><input name="username"><input name="password"><input name="session_code" value="session"></form>`)
+		case http.MethodPost:
+			require.Equal(t, "/login", r.URL.Path)
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "alice", r.Form.Get("username"))
+			require.Equal(t, "secret", r.Form.Get("password"))
+			_, _ = w.Write(assertion)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	kc := testKeycloakClient()
+	samlResponse, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL + "/start", Username: "alice", Password: "secret"})
+	require.NoError(t, err)
+	require.Equal(t, "abc123", samlResponse)
+}
+
+func TestClient_AuthenticateTOTP(t *testing.T) {
+	loginPage := `<form action="%s/login" method="post"><input name="username"><input name="password"></form>`
+	mfaPage, err := os.ReadFile("example/mfapage.html")
+	require.NoError(t, err)
+	mfaPage = bytes.Replace(mfaPage, []byte("https://id.example.com"), []byte("__KEYCLOAK_TEST_SERVER__"), 1)
+	assertion, err := os.ReadFile("example/assertion.html")
+	require.NoError(t, err)
+
+	var ts *httptest.Server
+	postCount := 0
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = io.WriteString(w, fmt.Sprintf(loginPage, ts.URL))
+		case http.MethodPost:
+			postCount++
+			if r.URL.Path == "/login" {
+				_, _ = io.WriteString(w, strings.ReplaceAll(string(mfaPage), "__KEYCLOAK_TEST_SERVER__", ts.URL))
+				return
+			}
+			require.Contains(t, r.URL.Path, "login-actions/authenticate")
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "123456", r.Form.Get("totp"))
+			_, _ = w.Write(assertion)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	kc := testKeycloakClient()
+	samlResponse, err := kc.Authenticate(&creds.LoginDetails{URL: ts.URL, Username: "alice", Password: "secret", MFAToken: "123456"})
+	require.NoError(t, err)
+	require.Equal(t, "abc123", samlResponse)
+	require.Equal(t, 2, postCount)
+}
+
+func TestClient_AuthenticateErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		loginURL  string
+		wantError string
+	}{
+		{name: "login request", loginURL: "://bad-url", wantError: "error retrieving login form from idp"},
+		{name: "missing login action", loginURL: "", wantError: "unable to locate IDP authentication form submit URL"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.loginURL == "://bad-url" {
+					http.Error(w, "unexpected", http.StatusInternalServerError)
+					return
+				}
+				_, _ = io.WriteString(w, `<html><body>no form</body></html>`)
+			}))
+			defer ts.Close()
+
+			loginURL := ts.URL
+			if tt.loginURL == "://bad-url" {
+				loginURL = tt.loginURL
+			}
+			_, err := testKeycloakClient().Authenticate(&creds.LoginDetails{URL: loginURL})
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.wantError)
+		})
+	}
+}
+
+func TestClient_AuthenticateMalformedResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "login post error", body: `<form action="://bad-url"><input name="username"></form>`, want: "error submitting login form"},
+		{name: "missing saml response", body: `<html><body>authenticated</body></html>`, want: "unable to locate saml response field"},
+		{name: "webauthn parameters", body: `<form id="webauth" action="https://example.invalid"><input name="authn_use_chk" value="credential"><script>const options = { rpId: "example.net" };</script></form>`, want: "could not extract Webauthn parameters"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ts *httptest.Server
+			ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					action := ts.URL + "/login"
+					if tt.name == "login post error" {
+						action = "://bad-url"
+					}
+					_, _ = io.WriteString(w, `<form action="`+action+`"><input name="username"></form>`)
+					return
+				}
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer ts.Close()
+
+			kc := testKeycloakClient()
+			_, err := kc.doAuthenticate(&authContext{authenticatorIndexValid: false}, &creds.LoginDetails{URL: ts.URL, Username: "alice"})
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestClient_postWebauthnFormNoRecognizedDevice(t *testing.T) {
+	kc := testKeycloakClient()
+	_, err := kc.postWebauthnForm("http://example.invalid", nil, "challenge", "example.net", nil)
+	require.EqualError(t, err, "tried all Webauthn devices, none was recognized")
+}
+
+func TestReencodeAsURLEncodingRejectsMalformedBase64(t *testing.T) {
+	_, err := reencodeAsURLEncoding("not-base64")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid base64 encoding")
+}
 
 func TestClient_getLoginForm(t *testing.T) {
 

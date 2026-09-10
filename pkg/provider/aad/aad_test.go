@@ -2,6 +2,7 @@ package aad
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
@@ -31,6 +32,12 @@ import (
 	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
 )
+
+type aadRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f aadRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 var once sync.Once
 
@@ -871,4 +878,131 @@ func TestAad_unmarshalEmbeddedJson(t *testing.T) {
 			require.Nil(t, err)
 		})
 	}
+}
+
+func TestAad_requestGetCredentialTypeErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		statusCode int
+		want       string
+	}{
+		{name: "malformed JSON", body: "{", statusCode: http.StatusOK, want: "error decoding GetCredentialType results"},
+		{name: "HTTP status", body: `{"error":"unavailable"}`, statusCode: http.StatusBadGateway, want: "error retrieving GetCredentialType results"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+
+			client, loginDetails := setupTestClient(t, server)
+			if test.name == "HTTP status" {
+				client.client.CheckResponseStatus = provider.SuccessOrRedirectResponseValidator
+			}
+			response, _, err := client.requestGetCredentialType("https://referer.example", loginDetails, &ConvergedResponse{
+				URLGetCredentialType: server.URL,
+			})
+			require.Empty(t, response.Username)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), test.want)
+		})
+	}
+
+	t.Run("invalid URL", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.NotFoundHandler())
+		defer server.Close()
+		client, loginDetails := setupTestClient(t, server)
+		_, _, err := client.requestGetCredentialType("https://referer.example", loginDetails, &ConvergedResponse{URLGetCredentialType: "://invalid"})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "error building GetCredentialType request")
+	})
+
+	t.Run("transport cancellation", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.NotFoundHandler())
+		defer server.Close()
+		client, loginDetails := setupTestClient(t, server)
+		client.client.Transport = aadRoundTripper(func(req *http.Request) (*http.Response, error) {
+			return nil, context.Canceled
+		})
+		_, _, err := client.requestGetCredentialType("https://referer.example", loginDetails, &ConvergedResponse{URLGetCredentialType: "https://aad.example/GetCredentialType"})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Contains(t, err.Error(), "error retrieving GetCredentialType results")
+	})
+}
+
+func TestAad_processAuthenticationErrors(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	client, loginDetails := setupTestClient(t, server)
+
+	_, err := client.processAuthentication("https://login.example", "https://referer.example", loginDetails, &ConvergedResponse{SErrorCode: "50053"})
+	require.EqualError(t, err, "login error 50053")
+
+	_, err = client.processAuthentication("://invalid", "https://referer.example", loginDetails, &ConvergedResponse{})
+	require.Contains(t, err.Error(), "error building login request")
+
+	client.client.Transport = aadRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	})
+	_, err = client.processAuthentication("https://login.example", "https://referer.example", loginDetails, &ConvergedResponse{})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Contains(t, err.Error(), "error retrieving login results")
+}
+
+func TestAad_processSAMLRequestErrors(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	client, _ := setupTestClient(t, server)
+	baseResponse := &http.Response{Request: &http.Request{URL: mustParseAadURL(t, "https://login.example/start")}}
+
+	_, err := client.processSAMLRequest(baseResponse, "window.location='about:blank';")
+	require.EqualError(t, err, "unable to locate SAMLRequest URL")
+
+	client.client.Transport = aadRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	})
+	_, err = client.processSAMLRequest(baseResponse, "window.location = 'https://login.example/?SAMLRequest=opaque';")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Contains(t, err.Error(), "error retrieving SAMLRequest results")
+}
+
+func TestAad_malformedEmbeddedResponses(t *testing.T) {
+	client := Client{}
+	var response ConvergedResponse
+	require.Error(t, client.unmarshalEmbeddedJson("<html>without config</html>", &response))
+	require.Error(t, client.unmarshalEmbeddedJson("$Config={not-json};", &response))
+
+	baseResponse := &http.Response{Request: &http.Request{URL: mustParseAadURL(t, "https://login.example/start")}}
+	_, err := client.processConvergedSignIn(baseResponse, "$Config={", &creds.LoginDetails{})
+	require.Contains(t, err.Error(), "ConvergedSignIn response unmarshal error")
+	_, err = client.processConvergedProofUpRedirect(baseResponse, "$Config={")
+	require.Contains(t, err.Error(), "skip MFA response unmarshal error")
+}
+
+func TestAad_processConvergedProofUpRedirectErrors(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	client, _ := setupTestClient(t, server)
+	response := &http.Response{Request: &http.Request{URL: mustParseAadURL(t, "https://login.example/start")}}
+	src := `$Config={"urlSkipMfaRegistration":"","sErrorCode":"50053"}`
+	_, err := client.processConvergedProofUpRedirect(response, src)
+	require.EqualError(t, err, "login error 50053")
+
+	client.client.Transport = aadRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	})
+	src = `$Config={"urlSkipMfaRegistration":"https://login.example/skip"}`
+	_, err = client.processConvergedProofUpRedirect(response, src)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Contains(t, err.Error(), "error processing skip MFA request")
+}
+
+func mustParseAadURL(t *testing.T, rawURL string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	return parsed
 }

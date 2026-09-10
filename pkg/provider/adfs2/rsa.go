@@ -196,9 +196,11 @@ func (ac *Client) postRSAForm(rsaSubmitURL string, form url.Values) (*goquery.Do
 func extractFormData(doc *goquery.Document) (url.Values, string, error) {
 	formData := url.Values{}
 	var actionURL string
+	formFound := false
 
 	//get action url
 	doc.Find("form").Each(func(i int, s *goquery.Selection) {
+		formFound = true
 		action, ok := s.Attr("action")
 		if !ok {
 			return
@@ -218,6 +220,13 @@ func extractFormData(doc *goquery.Document) (url.Values, string, error) {
 		}
 		formData.Set(name, val)
 	})
+
+	if !formFound {
+		return nil, "", errors.New("unable to locate authentication form")
+	}
+	if actionURL == "" {
+		return nil, "", errors.New("unable to locate authentication form submit URL")
+	}
 
 	return formData, actionURL, nil
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/AdrianAcala/saml2aws/v2/pkg/awsconfig"
@@ -63,12 +64,23 @@ func Console(consoleFlags *flags.ConsoleFlags) error {
 }
 
 func loadOrLogin(account *cfg.IDPAccount, sharedCreds *awsconfig.CredentialsProvider, execFlags *flags.ConsoleFlags) (*awsconfig.AWSCredentials, error) {
+	return loadOrLoginWith(account, sharedCreds, execFlags, Login, checkToken, time.Now)
+}
+
+type credentialsLoader interface {
+	Load() (*awsconfig.AWSCredentials, error)
+}
+
+type consoleLoginFunc func(*flags.LoginExecFlags) error
+type tokenChecker func(string) (bool, error)
+
+func loadOrLoginWith(account *cfg.IDPAccount, sharedCreds credentialsLoader, execFlags *flags.ConsoleFlags, login consoleLoginFunc, check tokenChecker, now func() time.Time) (*awsconfig.AWSCredentials, error) {
 
 	var err error
 
 	if execFlags.LoginExecFlags.Force {
 		log.Println("force login requested")
-		return loginRefreshCredentials(sharedCreds, execFlags.LoginExecFlags)
+		return loginRefreshCredentialsWith(sharedCreds, execFlags.LoginExecFlags, login)
 	}
 
 	awsCreds, err := sharedCreds.Load()
@@ -77,29 +89,29 @@ func loadOrLogin(account *cfg.IDPAccount, sharedCreds *awsconfig.CredentialsProv
 			return nil, errors.Wrap(err, "failed to load credentials")
 		}
 		log.Println("credentials not found triggering login")
-		return loginRefreshCredentials(sharedCreds, execFlags.LoginExecFlags)
+		return loginRefreshCredentialsWith(sharedCreds, execFlags.LoginExecFlags, login)
 	}
 
-	if time.Until(awsCreds.Expires) < 0 {
+	if now().After(awsCreds.Expires) {
 		log.Println("expired credentials triggering login")
-		return loginRefreshCredentials(sharedCreds, execFlags.LoginExecFlags)
+		return loginRefreshCredentialsWith(sharedCreds, execFlags.LoginExecFlags, login)
 	}
 
-	ok, err := checkToken(account.Profile)
+	ok, err := check(account.Profile)
 	if err != nil {
 		return nil, errors.Wrap(err, "error validating token")
 	}
 
 	if !ok {
 		log.Println("aws rejected credentials triggering login")
-		return loginRefreshCredentials(sharedCreds, execFlags.LoginExecFlags)
+		return loginRefreshCredentialsWith(sharedCreds, execFlags.LoginExecFlags, login)
 	}
 
 	return awsCreds, nil
 }
 
-func loginRefreshCredentials(sharedCreds *awsconfig.CredentialsProvider, execFlags *flags.LoginExecFlags) (*awsconfig.AWSCredentials, error) {
-	err := Login(execFlags)
+func loginRefreshCredentialsWith(sharedCreds credentialsLoader, execFlags *flags.LoginExecFlags, login consoleLoginFunc) (*awsconfig.AWSCredentials, error) {
+	err := login(execFlags)
 	if err != nil {
 		return nil, errors.Wrap(err, "error logging in")
 	}
@@ -108,6 +120,12 @@ func loginRefreshCredentials(sharedCreds *awsconfig.CredentialsProvider, execFla
 }
 
 func federatedLogin(creds *awsconfig.AWSCredentials, consoleFlags *flags.ConsoleFlags) error {
+	return federatedLoginWith(creds, consoleFlags, http.DefaultClient, open.Run, os.Stdout)
+}
+
+type urlOpener func(string) error
+
+func federatedLoginWith(creds *awsconfig.AWSCredentials, consoleFlags *flags.ConsoleFlags, client *http.Client, opener urlOpener, output io.Writer) error {
 	jsonBytes, err := json.Marshal(map[string]string{
 		"sessionId":    creds.AWSAccessKey,
 		"sessionKey":   creds.AWSSecretKey,
@@ -127,7 +145,7 @@ func federatedLogin(creds *awsconfig.AWSCredentials, consoleFlags *flags.Console
 
 	req.URL.RawQuery = q.Encode()
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -149,7 +167,7 @@ func federatedLogin(creds *awsconfig.AWSCredentials, consoleFlags *flags.Console
 
 	signinToken, ok := respParsed["SigninToken"]
 	if !ok {
-		return err
+		return fmt.Errorf("response did not contain SigninToken")
 	}
 
 	destination := "https://console.aws.amazon.com/"
@@ -164,9 +182,9 @@ func federatedLogin(creds *awsconfig.AWSCredentials, consoleFlags *flags.Console
 
 	// write the URL to stdout making it easy to capture separately and use in a shell function
 	if consoleFlags.Link {
-		fmt.Println(loginURL)
-		return nil
+		_, err = fmt.Fprintln(output, loginURL)
+		return err
 	}
 
-	return open.Run(loginURL)
+	return opener(loginURL)
 }

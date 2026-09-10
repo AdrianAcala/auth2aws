@@ -187,6 +187,9 @@ func (ac *Client) get(url string) (*goquery.Document, error) {
 
 	}
 	defer res.Body.Close()
+	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
+		return nil, errors.Errorf("request for url: %s failed status: %s", url, res.Status)
+	}
 
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
@@ -209,6 +212,9 @@ func (ac *Client) submit(url string, form url.Values) (*goquery.Document, error)
 
 	}
 	defer res.Body.Close()
+	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
+		return nil, errors.Errorf("request for url: %s failed status: %s", url, res.Status)
+	}
 
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {

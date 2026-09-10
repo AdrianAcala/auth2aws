@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -428,4 +430,132 @@ func TestClient_follow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuthenticateSuccessfulFlow(t *testing.T) {
+	const assertion = "pingntlm-saml-assertion"
+	encodedAssertion := base64.StdEncoding.EncodeToString([]byte(assertion))
+	var requests []string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/idp/startSSO.ping", r.URL.Path)
+		require.Equal(t, "urn:amazon:webservices", r.URL.Query().Get("PartnerSpId"))
+		_, err := io.WriteString(w, `<form action="https://signin.aws.amazon.com/saml"><input name="SAMLResponse" value="`+encodedAssertion+`"></form>`)
+		require.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	client, err := New(&cfg.IDPAccount{AmazonWebservicesURN: "urn:amazon:webservices"})
+	require.NoError(t, err)
+
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL, Username: "alice", Password: "secret"})
+	require.NoError(t, err)
+	require.Equal(t, assertion, string(mustDecodeSAML(t, got)))
+	require.Equal(t, []string{"GET /idp/startSSO.ping?PartnerSpId=urn:amazon:webservices"}, requests)
+	require.Equal(t, "ntlmssp.Negotiator", reflect.TypeOf(client.client.Transport).String())
+}
+
+func TestAuthenticateFollowsRedirect(t *testing.T) {
+	const assertion = "redirected-assertion"
+	encodedAssertion := base64.StdEncoding.EncodeToString([]byte(assertion))
+	var paths []string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/idp/startSSO.ping" {
+			http.Redirect(w, r, "/idp/final", http.StatusFound)
+			return
+		}
+		_, err := io.WriteString(w, `<form action="https://signin.aws.amazon.com/saml"><input name="SAMLResponse" value="`+encodedAssertion+`"></form>`)
+		require.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	client, err := New(&cfg.IDPAccount{AmazonWebservicesURN: "urn:amazon:webservices"})
+	require.NoError(t, err)
+	got, err := client.Authenticate(&creds.LoginDetails{URL: ts.URL, Username: "alice", Password: "secret"})
+	require.NoError(t, err)
+	require.Equal(t, assertion, string(mustDecodeSAML(t, got)))
+	require.Equal(t, []string{"/idp/startSSO.ping", "/idp/final"}, paths)
+}
+
+func TestFollowRedirectError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/final", http.StatusFound)
+	}))
+	defer ts.Close()
+
+	client := &Client{client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return fmt.Errorf("redirect denied")
+	}}}
+	req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	got, err := client.follow(context.Background(), req)
+	require.Empty(t, got)
+	require.ErrorContains(t, err, "error following")
+	require.ErrorContains(t, err, "redirect denied")
+}
+
+func TestFollowTransportError(t *testing.T) {
+	client := &Client{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("transport unavailable")
+	})}}
+	req, err := http.NewRequest(http.MethodGet, "https://example.test/login", nil)
+	require.NoError(t, err)
+
+	got, err := client.follow(context.Background(), req)
+	require.Empty(t, got)
+	require.EqualError(t, err, `error following: Get "https://example.test/login": transport unavailable`)
+}
+
+func TestFollowSAMLResponse(t *testing.T) {
+	const assertion = "follow-assertion"
+	encodedAssertion := base64.StdEncoding.EncodeToString([]byte(assertion))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.WriteString(w, `<form action="https://signin.aws.amazon.com/saml"><input name="SAMLResponse" value="`+encodedAssertion+`"></form>`)
+		require.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	client := &Client{client: &http.Client{}}
+	req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	got, err := client.follow(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, encodedAssertion, got)
+}
+
+func TestDocClassifications(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		fn   func(*goquery.Document) bool
+	}{
+		{"SAML request", `<form><input name="SAMLRequest" value="request"></form>`, docIsFormSamlRequest},
+		{"SAML response", `<form><input name="SAMLResponse" value="response"></form>`, docIsFormSamlResponse},
+		{"resume", `<form><input name="RelayState" value="resume"></form>`, docIsFormResume},
+		{"AWS SAML target", `<form action="https://signin.aws.amazon.com/saml"><input name="SAMLResponse" value="response"></form>`, docIsFormRedirectToAWS},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(tt.body))
+			require.NoError(t, err)
+			require.True(t, tt.fn(doc))
+		})
+	}
+}
+
+func mustDecodeSAML(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	require.NoError(t, err)
+	return decoded
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

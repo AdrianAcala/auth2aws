@@ -16,6 +16,12 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	checkTokenFunc   = checkToken
+	loginFunc        = Login
+	execShellCmdFunc = shell.ExecShellCmd
+)
+
 // Exec execute the supplied command after seeding the environment
 func Exec(execFlags *flags.LoginExecFlags, cmdline []string) error {
 
@@ -51,13 +57,13 @@ func Exec(execFlags *flags.LoginExecFlags, cmdline []string) error {
 		return errors.New("error aws credentials have expired")
 	}
 
-	ok, err := checkToken(account.Profile)
+	ok, err := checkTokenFunc(account.Profile)
 	if err != nil {
 		return errors.Wrap(err, "error validating token")
 	}
 
 	if !ok {
-		err = Login(execFlags)
+		err = loginFunc(execFlags)
 	}
 	if err != nil {
 		return errors.Wrap(err, "error logging in")
@@ -72,7 +78,7 @@ func Exec(execFlags *flags.LoginExecFlags, cmdline []string) error {
 		}
 	}
 
-	return shell.ExecShellCmd(cmdline, shell.BuildEnvVars(awsCreds, account, execFlags))
+	return execShellCmdFunc(cmdline, shell.BuildEnvVars(awsCreds, account, execFlags))
 }
 
 // assumeRoleWithProfile uses an AWS profile (via ~/.aws/config) and performs (multiple levels of) role assumption
@@ -129,15 +135,17 @@ func checkToken(profile string) (bool, error) {
 	params := &sts.GetCallerIdentityInput{}
 
 	_, err = svc.GetCallerIdentity(params)
-	if err != nil {
-		if awsErr, ok := err.(awserr.Error); ok {
-			if awsErr.Code() == "ExpiredToken" || awsErr.Code() == "NoCredentialProviders" {
-				return false, nil
-			}
-		}
+	return checkTokenError(err)
+}
 
-		return false, err
+func checkTokenError(err error) (bool, error) {
+	if err == nil {
+		return true, nil
 	}
-
-	return true, nil
+	if awsErr, ok := err.(awserr.Error); ok {
+		if awsErr.Code() == "ExpiredToken" || awsErr.Code() == "NoCredentialProviders" {
+			return false, nil
+		}
+	}
+	return false, err
 }

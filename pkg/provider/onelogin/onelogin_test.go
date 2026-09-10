@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AdrianAcala/saml2aws/v2/mocks"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
@@ -195,4 +196,168 @@ func TestOneLoginMFAUsesProvidedTOTP(t *testing.T) {
 	assert.Equal(t, "state1", request.StateToken)
 	assert.Equal(t, "530912", request.OTPToken)
 	pr.AssertExpectations(t)
+}
+
+func TestOneLoginSupportedMFAFactors(t *testing.T) {
+	tests := []struct {
+		name       string
+		identifier string
+		mfa        string
+		mfaToken   string
+		wantOTP    string
+	}{
+		{name: "OneLogin Protect", identifier: onelogin.IdentifierOneLoginProtectMfa, mfa: "OLP"},
+		{name: "SMS", identifier: onelogin.IdentifierSmsMfa, mfa: "SMS", wantOTP: "123456"},
+		{name: "TOTP", identifier: onelogin.IdentifierTotpMfa, mfa: "TOTP", mfaToken: "530912", wantOTP: "530912"},
+		{name: "YubiKey", identifier: onelogin.IdentifierYubiKey, mfa: "YUBIKEY", wantOTP: "123456"},
+		{name: "Duo", identifier: onelogin.IdentifierDuoSecurity, mfa: "DUO TOTP", wantOTP: "123456"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verifyRequests := make(chan onelogin.VerifyRequest, 2)
+			polls := 0
+			svr := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/auth/oauth2/v2/token":
+					_, _ = w.Write([]byte(`{"access_token":"token"}`))
+				case "/api/2/saml_assertion":
+					_, _ = w.Write([]byte(`{"message":"MFA is required for this user","state_token":"state","devices":[{"device_type":"` + tt.identifier + `","device_id":"device"}]}`))
+				case "/api/2/saml_assertion/verify_factor":
+					var request onelogin.VerifyRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					verifyRequests <- request
+					polls++
+					if tt.identifier == onelogin.IdentifierOneLoginProtectMfa && polls == 1 {
+						_, _ = w.Write([]byte(`{"message":"Authentication pending"}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"message":"Success","data":"assertion"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer svr.Close()
+
+			oldPrompter := prompter.ActivePrompter
+			t.Cleanup(func() { prompter.SetPrompter(oldPrompter) })
+			pr := &mocks.Prompter{}
+			pr.Test(t)
+			if tt.wantOTP != "" && tt.mfaToken == "" {
+				pr.On("StringRequired", "Enter verification code").Return(tt.wantOTP)
+			}
+			prompter.SetPrompter(pr)
+
+			account := cfg.NewIDPAccount()
+			account.URL, account.MFA, account.SkipVerify = svr.URL, tt.mfa, true
+			oc, err := onelogin.New(account)
+			require.NoError(t, err)
+			assertion, err := oc.Authenticate(&creds.LoginDetails{URL: svr.URL, MFAToken: tt.mfaToken})
+			require.NoError(t, err)
+			assert.Equal(t, "assertion", assertion)
+
+			var request onelogin.VerifyRequest
+			for {
+				select {
+				case request = <-verifyRequests:
+				default:
+					goto gotLastRequest
+				}
+			}
+		gotLastRequest:
+			assert.Equal(t, "device", request.DeviceID)
+			assert.Equal(t, "state", request.StateToken)
+			if tt.identifier == onelogin.IdentifierOneLoginProtectMfa {
+				assert.True(t, request.DoNotNotify)
+			} else {
+				assert.Equal(t, tt.wantOTP, request.OTPToken)
+			}
+			pr.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOneLoginAuthenticateErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		oauthBody string
+		oauthCode int
+		authBody  string
+		authCode  int
+		wantErr   string
+	}{
+		{name: "OAuth failure", oauthBody: `{"message":"bad client"}`, oauthCode: http.StatusUnauthorized, wantErr: "failed to generate oauth token: HTTP 401: bad client"},
+		{name: "OAuth malformed response", oauthBody: "not-json", oauthCode: http.StatusOK, wantErr: "failed to generate oauth token: invalid oauth token response"},
+		{name: "auth denial", oauthBody: `{"access_token":"token"}`, oauthCode: http.StatusOK, authBody: `{"message":"Access denied"}`, authCode: http.StatusUnauthorized, wantErr: "HTTP 401: Access denied"},
+		{name: "auth malformed response", oauthBody: `{"access_token":"token"}`, oauthCode: http.StatusOK, authBody: "not-json", authCode: http.StatusOK, wantErr: "invalid SAML assertion response"},
+		{name: "missing assertion", oauthBody: `{"access_token":"token"}`, oauthCode: http.StatusOK, authBody: `{"message":"Success"}`, authCode: http.StatusOK, wantErr: "invalid SAML assertion returned"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svr := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/auth/oauth2/v2/token" {
+					w.WriteHeader(tt.oauthCode)
+					_, _ = w.Write([]byte(tt.oauthBody))
+					return
+				}
+				w.WriteHeader(tt.authCode)
+				_, _ = w.Write([]byte(tt.authBody))
+			}))
+			defer svr.Close()
+			account := cfg.NewIDPAccount()
+			account.URL, account.SkipVerify = svr.URL, true
+			oc, err := onelogin.New(account)
+			require.NoError(t, err)
+			_, err = oc.Authenticate(&creds.LoginDetails{URL: svr.URL})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestOneLoginMFAPollRejection(t *testing.T) {
+	svr := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/oauth2/v2/token":
+			_, _ = w.Write([]byte(`{"access_token":"token"}`))
+		case "/api/2/saml_assertion":
+			_, _ = w.Write([]byte(`{"message":"MFA is required for this user","state_token":"state","devices":[{"device_type":"OneLogin Protect","device_id":"device"}]}`))
+		case "/api/2/saml_assertion/verify_factor":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"Authentication rejected"}`))
+		}
+	}))
+	defer svr.Close()
+	account := cfg.NewIDPAccount()
+	account.URL, account.MFA, account.SkipVerify = svr.URL, "OLP", true
+	oc, err := onelogin.New(account)
+	require.NoError(t, err)
+	_, err = oc.Authenticate(&creds.LoginDetails{URL: svr.URL})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 403: Authentication rejected")
+}
+
+func TestOneLoginMFAPollTimeout(t *testing.T) {
+	svr := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/oauth2/v2/token" {
+			_, _ = w.Write([]byte(`{"access_token":"token"}`))
+			return
+		}
+		if r.URL.Path == "/api/2/saml_assertion" {
+			_, _ = w.Write([]byte(`{"message":"MFA is required for this user","state_token":"state","devices":[{"device_type":"OneLogin Protect","device_id":"device"}]}`))
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer svr.Close()
+	account := cfg.NewIDPAccount()
+	account.URL, account.MFA, account.SkipVerify = svr.URL, "OLP", true
+	oc, err := onelogin.New(account)
+	require.NoError(t, err)
+	oc.Client.Timeout = 10 * time.Millisecond
+	_, err = oc.Authenticate(&creds.LoginDetails{URL: svr.URL})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "error retrieving verify response")
 }

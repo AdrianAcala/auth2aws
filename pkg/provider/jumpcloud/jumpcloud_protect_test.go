@@ -129,6 +129,26 @@ func Test_jumpCloudProtectAuth(t *testing.T) {
 	require.Equal(t, pendingCnt, maxPending)
 }
 
+func Test_jumpCloudProtectAuthExpiredBeforePolling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			t.Fatalf("unexpected polling request for expired push: %s", r.URL.Path)
+		}
+		response := JumpCloudPushResponse{
+			ID:        "expired-request",
+			ExpiresAt: time.Now().Add(-time.Second).UTC(),
+			Status:    "pending",
+		}
+		returnResp(t, "pending", http.StatusOK, &response, w)
+	}))
+	defer server.Close()
+
+	client, err := New(&cfg.IDPAccount{Provider: "JumpCloud", MFA: "PUSH"})
+	require.NoError(t, err)
+	_, err = client.jumpCloudProtectAuth(server.URL, "expired")
+	require.EqualError(t, err, "the session is expired try again")
+}
+
 func returnResp(t *testing.T, status string, statusCode int, j *JumpCloudPushResponse, w http.ResponseWriter) {
 	j.Status = status
 	bytes, err := json.Marshal(j)

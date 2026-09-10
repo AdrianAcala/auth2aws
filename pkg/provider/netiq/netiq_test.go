@@ -2,14 +2,36 @@ package netiq
 
 import (
 	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/AdrianAcala/saml2aws/v2/pkg/creds"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/page"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/provider"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/stretchr/testify/require"
 )
+
+const testSAMLResponse = `<html><body><form><input name="SAMLResponse" value="test-assertion"></form></body></html>`
+
+func testNetIQClient(t *testing.T, handler http.Handler) (*Client, *httptest.Server) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	httpClient, err := provider.NewHTTPClient(http.DefaultTransport, &provider.HTTPClientOptions{})
+	require.NoError(t, err)
+	return &Client{client: httpClient, MFA: "Auto"}, server
+}
+
+func testLoginDetails(serverURL string) *creds.LoginDetails {
+	return &creds.LoginDetails{URL: serverURL, Username: "alice", Password: "correct horse"}
+}
 
 func TestIsSAMLResponsePositive(t *testing.T) {
 	//given
@@ -278,4 +300,183 @@ func TestUnsupportedMFA(t *testing.T) {
 
 	//then
 	require.EqualError(t, err, expectedErrorString)
+}
+
+func TestAuthenticateDirectSAMLResponse(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/nidp/saml2/idpsend", r.URL.Path)
+		_, _ = io.WriteString(w, testSAMLResponse)
+	}))
+	defer server.Close()
+
+	assertion, err := client.Authenticate(testLoginDetails(server.URL))
+	require.NoError(t, err)
+	require.Equal(t, "test-assertion", assertion)
+}
+
+func TestAuthenticatePasswordFlowPostsCredentials(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/nidp/saml2/idpsend":
+			_, _ = io.WriteString(w, `<html><body><script>getToContent('/nidp/app/login?sid=0', "contentDiv");</script></body></html>`)
+		case r.Method == http.MethodGet && r.URL.Path == "/nidp/app/login":
+			_, _ = io.WriteString(w, `<html><body><form action="http://`+r.Host+`/login" method="POST"><input name="Ecom_Password"></form></body></html>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/login":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "alice", r.Form.Get("Ecom_User_ID"))
+			require.Equal(t, "correct horse", r.Form.Get("Ecom_Password"))
+			_, _ = io.WriteString(w, testSAMLResponse)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	assertion, err := client.Authenticate(testLoginDetails(server.URL))
+	require.NoError(t, err)
+	require.Equal(t, "test-assertion", assertion)
+}
+
+func TestAuthenticatePrivilegedPasswordFlow(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/nidp/saml2/idpsend":
+			_, _ = io.WriteString(w, `<html><body><script>getToContent('/ignored', "contentDiv");</script></body></html>`)
+		case r.Method == http.MethodGet && r.URL.Path == "/nidp/app/login" && r.URL.Query().Get("id") == "privacc":
+			_, _ = io.WriteString(w, `<html><body><form action="http://`+r.Host+`/privileged-login" method="POST"><input name="Ecom_Password"></form></body></html>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/privileged-login":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "alice", r.Form.Get("Ecom_User_ID"))
+			require.Equal(t, "correct horse", r.Form.Get("Ecom_Password"))
+			_, _ = io.WriteString(w, testSAMLResponse)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client.MFA = "Privileged"
+
+	assertion, err := client.Authenticate(testLoginDetails(server.URL))
+	require.NoError(t, err)
+	require.Equal(t, "test-assertion", assertion)
+}
+
+type fixedPrompter struct{}
+
+func (fixedPrompter) RequestSecurityCode(string) string                          { return "" }
+func (fixedPrompter) ChooseWithDefault(string, string, []string) (string, error) { return "", nil }
+func (fixedPrompter) Choose(string, []string) int                                { return 0 }
+func (fixedPrompter) StringRequired(string) string                               { return "123456" }
+func (fixedPrompter) String(string, string) string                               { return "" }
+func (fixedPrompter) Password(string) string                                     { return "" }
+func (fixedPrompter) Display(string)                                             {}
+
+func TestAuthenticateRSAFlowPostsToken(t *testing.T) {
+	oldPrompter := prompter.ActivePrompter
+	prompter.SetPrompter(fixedPrompter{})
+	defer prompter.SetPrompter(oldPrompter)
+
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/nidp/saml2/idpsend":
+			_, _ = io.WriteString(w, `<html><body><form action="http://`+r.Host+`/rsa-login" method="POST"><input name="Ecom_Token"></form></body></html>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/rsa-login":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "alice", r.Form.Get("Ecom_User_ID"))
+			require.Equal(t, "123456", r.Form.Get("Ecom_Token"))
+			_, _ = io.WriteString(w, testSAMLResponse)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	assertion, err := client.Authenticate(testLoginDetails(server.URL))
+	require.NoError(t, err)
+	require.Equal(t, "test-assertion", assertion)
+}
+
+func TestFollowWinLocationHref(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			_, _ = io.WriteString(w, `<html><body><script>window.location.href='http://`+r.Host+`/saml';</script></body></html>`)
+			return
+		}
+		_, _ = io.WriteString(w, testSAMLResponse)
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+	require.NoError(t, err)
+	assertion, err := client.follow(req, testLoginDetails(server.URL))
+	require.NoError(t, err)
+	require.Equal(t, "test-assertion", assertion)
+}
+
+func TestAuthenticateMalformedURL(t *testing.T) {
+	client := &Client{}
+	_, err := client.Authenticate(&creds.LoginDetails{URL: "://malformed"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Error building request")
+}
+
+func TestFollowUnknownDocument(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<html><body><p>unexpected response</p></body></html>`)
+	}))
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	_, err = client.follow(req, testLoginDetails(server.URL))
+	require.EqualError(t, err, "unknown document type")
+}
+
+func TestFollowUnsupportedMFA(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<html><body><script>getToContent('/next', "contentDiv");</script></body></html>`)
+	}))
+	defer server.Close()
+	client.MFA = "Unsupported"
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	_, err = client.follow(req, testLoginDetails(server.URL))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "MFA option unsupported")
+}
+
+func TestFollowHTTPError(t *testing.T) {
+	httpClient, err := provider.NewHTTPClient(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}), &provider.HTTPClientOptions{})
+	require.NoError(t, err)
+	client := &Client{client: httpClient, MFA: "Auto"}
+	req, err := http.NewRequest(http.MethodGet, "https://id.example.test/start", nil)
+	require.NoError(t, err)
+	_, err = client.follow(req, testLoginDetails("https://id.example.test"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Failed to perform http request")
+	require.Contains(t, err.Error(), "connection refused")
+}
+
+func TestFollowHTTPStatusError(t *testing.T) {
+	client, server := testNetIQClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream failure", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	client.client.CheckResponseStatus = provider.SuccessOrRedirectResponseValidator
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+	require.NoError(t, err)
+	_, err = client.follow(req, testLoginDetails(server.URL))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed status")
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestBuildGetToContentRequestMalformedURL(t *testing.T) {
+	_, err := buildGetToContentRequest("://malformed")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "missing protocol scheme"))
 }

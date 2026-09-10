@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -10,11 +11,44 @@ import (
 	"github.com/AdrianAcala/saml2aws/v2/mocks"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/cfg"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/flags"
+	"github.com/AdrianAcala/saml2aws/v2/pkg/prompter"
 	"github.com/AdrianAcala/saml2aws/v2/pkg/provider/onelogin"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+type configureTestPrompter struct {
+	chooseErr error
+}
+
+func (p *configureTestPrompter) RequestSecurityCode(string) string { return "" }
+func (p *configureTestPrompter) ChooseWithDefault(string, string, []string) (string, error) {
+	return "", p.chooseErr
+}
+func (p *configureTestPrompter) Choose(string, []string) int  { return 0 }
+func (p *configureTestPrompter) String(string, string) string { return "" }
+func (p *configureTestPrompter) StringRequired(string) string { return "" }
+func (p *configureTestPrompter) Password(string) string       { return "" }
+func (p *configureTestPrompter) Display(string)               {}
+
+func configureTestHelper(t *testing.T) {
+	t.Helper()
+	old := credentials.CurrentHelper
+	helperMock := &mocks.Helper{}
+	helperMock.On("SupportsCredentialStorage").Return(false)
+	credentials.CurrentHelper = helperMock
+	t.Cleanup(func() { credentials.CurrentHelper = old })
+}
+
+func writeConfigureFile(t *testing.T, contents string) string {
+	t.Helper()
+	filename := path.Join(t.TempDir(), "saml2aws.ini")
+	if err := os.WriteFile(filename, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return filename
+}
 
 // Configure module
 func TestConfigureStoresCredentialOnSupportedStorage(t *testing.T) {
@@ -34,6 +68,96 @@ func TestConfigureStoresCredentialOnSupportedStorage(t *testing.T) {
 
 	helperMock.AssertCalled(t, "Add", creds)
 	credentials.CurrentHelper = oldCurrentHelper
+}
+
+func TestConfigureCreatesAndUpdatesAccountPreservingExistingValues(t *testing.T) {
+	configureTestHelper(t)
+	configFile := writeConfigureFile(t, "[existing]\nurl = https://existing.example.com\nprovider = Ping\nmfa = Auto\nprofile = existing\nregion = us-west-2\n")
+
+	err := Configure(&flags.CommonFlags{
+		ConfigFile:  configFile,
+		IdpAccount:  "new-account",
+		URL:         "https://id.example.com",
+		Username:    "new-user",
+		IdpProvider: "Ping",
+		MFA:         "Auto",
+		Profile:     "new-profile",
+		SkipPrompt:  true,
+	})
+	assert.NoError(t, err)
+
+	cfgm, err := cfg.NewConfigManager(configFile)
+	assert.NoError(t, err)
+	created, err := cfgm.LoadIDPAccount("new-account")
+	assert.NoError(t, err)
+	assert.Equal(t, "https://id.example.com", created.URL)
+	assert.Equal(t, "new-user", created.Username)
+	assert.Equal(t, "new-profile", created.Profile)
+
+	err = Configure(&flags.CommonFlags{
+		ConfigFile: configFile,
+		IdpAccount: "new-account",
+		Username:   "updated-user",
+		Region:     "eu-west-1",
+		SkipPrompt: true,
+	})
+	assert.NoError(t, err)
+
+	updated, err := cfgm.LoadIDPAccount("new-account")
+	assert.NoError(t, err)
+	assert.Equal(t, "updated-user", updated.Username)
+	assert.Equal(t, "https://id.example.com", updated.URL)
+	assert.Equal(t, "Ping", updated.Provider)
+	assert.Equal(t, "Auto", updated.MFA)
+	assert.Equal(t, "new-profile", updated.Profile)
+	assert.Equal(t, "eu-west-1", updated.Region)
+
+	existing, err := cfgm.LoadIDPAccount("existing")
+	assert.NoError(t, err)
+	assert.Equal(t, "https://existing.example.com", existing.URL)
+	assert.Equal(t, "us-west-2", existing.Region)
+}
+
+func TestConfigureReturnsErrorWhenConfigurationCannotBeLoaded(t *testing.T) {
+	configureTestHelper(t)
+	err := Configure(&flags.CommonFlags{
+		ConfigFile: t.TempDir(),
+		IdpAccount: "account",
+		SkipPrompt: true,
+	})
+	assert.ErrorContains(t, err, "failed to load idp account")
+}
+
+func TestConfigureReturnsPromptCancellationError(t *testing.T) {
+	configureTestHelper(t)
+	configFile := writeConfigureFile(t, "[account]\nurl = https://id.example.com\nprovider = Ping\nmfa = Auto\nprofile = saml\n")
+	oldPrompter := prompter.ActivePrompter
+	prompter.ActivePrompter = &configureTestPrompter{chooseErr: fmt.Errorf("cancelled")}
+	t.Cleanup(func() { prompter.ActivePrompter = oldPrompter })
+
+	err := Configure(&flags.CommonFlags{ConfigFile: configFile, IdpAccount: "account"})
+	assert.ErrorContains(t, err, "failed to input configuration")
+	assert.ErrorContains(t, err, "cancelled")
+}
+
+func TestSaveConfigurationReturnsValidationError(t *testing.T) {
+	configureTestHelper(t)
+	configFile := writeConfigureFile(t, "")
+	cfgm, err := cfg.NewConfigManager(configFile)
+	assert.NoError(t, err)
+
+	err = saveConfiguration(cfgm, "account", &cfg.IDPAccount{Provider: "Ping"}, &flags.CommonFlags{}, "")
+	assert.ErrorContains(t, err, "Account validation failed")
+}
+
+func TestSaveConfigurationReturnsWriteError(t *testing.T) {
+	configureTestHelper(t)
+	cfgm, err := cfg.NewConfigManager(t.TempDir())
+	assert.NoError(t, err)
+	account := &cfg.IDPAccount{URL: "https://id.example.com", Provider: "Ping", MFA: "Auto", Profile: "saml"}
+
+	err = saveConfiguration(cfgm, "account", account, &flags.CommonFlags{}, "")
+	assert.ErrorContains(t, err, "failed to save configuration")
 }
 
 // Store Credentials module

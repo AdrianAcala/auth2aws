@@ -70,6 +70,17 @@ test:
 	@go test -cover ./...
 .PHONY: test
 
+test-race:
+	@echo "--- test with the race detector"
+	@go test -race -count=1 -timeout=10m ./...
+.PHONY: test-race
+
+test-release:
+	@echo "--- test release source"
+	@go test -count=1 -timeout=10m ./...
+	@$(MAKE) test-race
+.PHONY: test-release
+
 # It can be difficult to set up and test everything locally.  Using this target you can build and run a docker container
 # that has all the tools you need to build and test saml2aws.  This is particularly useful on Mac as it allows the Linux
 # and Docker builds to be tested.

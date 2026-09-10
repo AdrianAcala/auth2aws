@@ -133,7 +133,7 @@ func (oc *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 
 	xsrfToken, ok := doc.Find("input[id=\"xsrf\"]").Attr("value")
 	if !ok {
-		return samlAssertion, errors.Wrap(err, "unable to locate xsrf token in html")
+		return samlAssertion, errors.New("unable to locate xsrf token in html")
 	}
 
 	// Send login request to Akamai
@@ -169,7 +169,7 @@ func (oc *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 	if authStatus != "200" {
 		authFailReason := gjson.Get(resp, "msg").String()
 		log.Printf("Login Failed %s", authFailReason)
-		return samlAssertion, errors.Wrap(err, "Login Failure")
+		return samlAssertion, errors.New("Login Failure")
 	}
 
 	// Send saml navigate request to Akamai
@@ -207,7 +207,7 @@ func (oc *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 		}
 	} else if mfaStatus == "register" {
 		log.Println("MFA is enabled but not registered for user. Register MFA by accessing EAA IDP from Browser")
-		return samlAssertion, errors.Wrap(err, "register mfa by logging to IDP")
+		return samlAssertion, errors.New("register mfa by logging to IDP")
 	}
 
 	/* MFA is done call navigate again */
@@ -246,7 +246,7 @@ func (oc *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 
 	samlAssertion, ok = doc.Find("input[name=\"SAMLResponse\"]").Attr("value")
 	if !ok {
-		return samlAssertion, errors.Wrap(err, "unable to locate SAMLResponse in html")
+		return samlAssertion, errors.New("unable to locate SAMLResponse in html")
 	}
 
 	logger.Debug("auth complete")
@@ -275,7 +275,7 @@ func verifyMfa(oc *Client, akamaiOrgHost string, loginDetails *creds.LoginDetail
 	mfaConfigData := gjson.GetBytes(body, "mfa.config.options")
 	if mfaConfigData.Index == 0 {
 		log.Println("Mfa Config option not found")
-		return errors.Wrap(err, "Mfa not configured ")
+		return errors.New("Mfa not configured ")
 	}
 
 	/* Mfa config data present or not check otherwise return directly */

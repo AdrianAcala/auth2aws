@@ -22,6 +22,12 @@ type pageNavigator interface {
 	Goto(url string, options ...playwright.PageGotoOptions) (playwright.Response, error)
 }
 
+type responsePage interface {
+	OnRequest(func(playwright.Request))
+	ExpectRequest(interface{}, func() error, ...playwright.PageExpectRequestOptions) (playwright.Request, error)
+	Goto(string, ...playwright.PageGotoOptions) (playwright.Response, error)
+}
+
 // Client client for browser based Identity Provider
 type Client struct {
 	BrowserType           string
@@ -165,7 +171,7 @@ func (cl *Client) Authenticate(loginDetails *creds.LoginDetails) (string, error)
 	return getSAMLResponse(page, loginDetails, cl)
 }
 
-var getSAMLResponse = func(page playwright.Page, loginDetails *creds.LoginDetails, client *Client) (string, error) {
+var getSAMLResponse = func(page responsePage, loginDetails *creds.LoginDetails, client *Client) (string, error) {
 	var data string
 	var dataErr error
 
@@ -186,7 +192,11 @@ var getSAMLResponse = func(page playwright.Page, loginDetails *creds.LoginDetail
 	}
 
 	if client.BrowserAutoFill {
-		err := autoFill(page, loginDetails)
+		playwrightPage, ok := page.(playwright.Page)
+		if !ok {
+			return "", errors.New("browser page does not support autofill")
+		}
+		err := autoFill(playwrightPage, loginDetails)
 		if err != nil {
 			logger.Error("error when auto filling", err)
 		}
@@ -197,11 +207,15 @@ var getSAMLResponse = func(page playwright.Page, loginDetails *creds.LoginDetail
 		r, err := page.ExpectRequest(signin_re, nil, client.expectRequestTimeout())
 		if err != nil {
 			logger.Error(err)
+			return "", err
+		}
+		if r == nil {
+			return "", errors.New("sign-in request was not captured")
 		}
 		data, dataErr = r.PostData()
 	}
 	if dataErr != nil {
-		return "", err
+		return "", dataErr
 	}
 
 	values, err := url.ParseQuery(data)
