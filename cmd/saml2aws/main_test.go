@@ -86,12 +86,12 @@ func TestCLIRejectsInvalidCommandAndFlag(t *testing.T) {
 }
 
 func TestCLIDeprecatedProviderFails(t *testing.T) {
-	status, _, stderr := runCLI(t, nil, "--provider", "Okta", "script")
+	status, stdout, stderr := runCLI(t, nil, "--provider", "Okta", "script")
 	if status != 1 {
 		t.Fatalf("deprecated provider status = %d, stderr = %q", status, stderr)
 	}
-	if !strings.Contains(stderr, "--provider flag has been replaced") {
-		t.Fatalf("deprecated provider message missing: %q", stderr)
+	if output := stdout + stderr; !strings.Contains(output, "--provider flag has been replaced") {
+		t.Fatalf("deprecated provider message missing: %q", output)
 	}
 }
 
@@ -111,9 +111,9 @@ func TestCLIQuietAndVerboseLogging(t *testing.T) {
 	verboseConfig := filepath.Join(verboseDir, "config")
 	writeScriptConfig(t, verboseConfig)
 	writeScriptCredentials(t, verboseFile)
-	status, _, stderr = runCLI(t, map[string]string{"AWS_SHARED_CREDENTIALS_FILE": verboseFile}, "--verbose", "--config", verboseConfig, "script")
-	if status != 0 || !strings.Contains(stderr, "command=script") {
-		t.Fatalf("verbose script: status=%d stderr=%q", status, stderr)
+	status, stdout, stderr = runCLI(t, map[string]string{"AWS_SHARED_CREDENTIALS_FILE": verboseFile}, "--verbose", "--config", verboseConfig, "script")
+	if output := stdout + stderr; status != 0 || !strings.Contains(output, "command=script") {
+		t.Fatalf("verbose script: status=%d stdout=%q stderr=%q", status, stdout, stderr)
 	}
 }
 

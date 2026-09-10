@@ -38,15 +38,30 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
-      - name: Set up Go
+      - name: Set up minimum supported Go
+        if: runner.os == 'Linux'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up current Go on native runners
+        if: runner.os != 'Linux'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+
       - name: Install Linux test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev libudev-dev
+          go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0 install --with-deps chromium
+
+      - name: Install Playwright test browser
+        if: runner.os != 'Linux'
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0 install chromium
 
       - name: Run release-source tests
         run: go test -count=1 -timeout=10m ./...
@@ -72,7 +87,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: stable
           cache: true
 
       - name: Validate GoReleaser configurations
@@ -152,7 +167,7 @@ jobs:
       - name: Set up Go 1.x
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: "go.mod"
+          go-version: stable
 
       - name: Install dependency required for linux builds
         if: matrix.os == 'ubuntu-22.04'

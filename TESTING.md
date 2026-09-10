@@ -5,7 +5,10 @@ and Windows. Linux also runs the Go race detector. CI cross-builds every support
 OS and architecture and validates lint before the single `CI success` gate passes.
 Configure branch protection to require the `CI success` check before merging.
 The overall statement coverage floor starts at 50% so future changes cannot erase
-the coverage established by this suite.
+the coverage established by this suite. Linux tests use the minimum Go version
+declared by the module; native macOS and Windows tests and release builds use the
+current stable Go toolchain. CI provisions the matching Playwright driver and
+Chromium build before exercising browser-provider tests.
 
 Run the same core checks locally with:
 
@@ -13,10 +16,10 @@ Run the same core checks locally with:
 make test-release
 ```
 
-Tests must not require real identity-provider accounts, AWS credentials, browser
-downloads, or public network access. Provider protocol tests should use local HTTP
-servers and scrubbed fixtures. A bug fix must include a regression test that fails
-without the fix.
+Tests must not require real identity-provider accounts, AWS credentials, or public
+network access after dependencies and the test browser are provisioned. Provider
+protocol tests should use local HTTP servers and scrubbed fixtures. A bug fix must
+include a regression test that fails without the fix.
 
 Tag and manual release workflows check out the exact requested ref, run the suite
 on Linux, macOS, and Windows, and run the race detector on Linux. Publishing is

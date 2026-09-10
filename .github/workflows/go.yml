@@ -35,7 +35,10 @@ jobs:
           cache: true
 
       - name: Install Linux test dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev libudev-dev
+          go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0 install --with-deps chromium
 
       - name: Test with coverage and race detection
         run: go test -race -count=1 -timeout=10m -covermode=atomic -coverprofile=coverage.out ./...
@@ -68,8 +71,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: stable
           cache: true
+
+      - name: Install Playwright test browser
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6100.0 install chromium
 
       - name: Run tests
         run: go test -count=1 -timeout=10m ./...

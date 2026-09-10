@@ -3,7 +3,6 @@ package samlcache
 import (
 	b64 "encoding/base64"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -23,8 +22,8 @@ func TestLocateCacheDefault(t *testing.T) {
 		t.Error("Retrieved location is empty")
 	}
 
-	if path.Base(cache_location) != "cache" {
-		t.Error("Filename is not the default one (cache):", path.Base(cache_location))
+	if filepath.Base(cache_location) != "cache" {
+		t.Error("Filename is not the default one (cache):", filepath.Base(cache_location))
 	}
 
 }
@@ -40,8 +39,8 @@ func TestLocateCacheAccount(t *testing.T) {
 		t.Error("Retrieved location is empty")
 	}
 
-	if path.Base(cache_location) != "cache_myaccount" {
-		t.Error("Filename is not the default one (cache_myaccount):", path.Base(cache_location))
+	if filepath.Base(cache_location) != "cache_myaccount" {
+		t.Error("Filename is not the default one (cache_myaccount):", filepath.Base(cache_location))
 	}
 
 }
@@ -331,7 +330,15 @@ func TestLocateCacheResolvesSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != target {
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(gotInfo, targetInfo) {
 		t.Fatalf("locateCacheFile() = %q, want symlink target %q", got, target)
 	}
 }
