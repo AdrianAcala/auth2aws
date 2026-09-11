@@ -218,15 +218,25 @@ jobs:
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Publish OpenGrep findings to GitHub Code Scanning
+      - name: Publish repository findings to GitHub Code Scanning
         if: >-
           always() &&
-          hashFiles('opengrep-results/*.sarif') != '' &&
+          hashFiles('opengrep-results/repository.sarif') != '' &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          sarif_file: opengrep-results
-          category: opengrep
+          sarif_file: opengrep-results/repository.sarif
+          category: opengrep/repository
+
+      - name: Publish Dockerfile.build findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('opengrep-results/dockerfile-build.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: opengrep-results/dockerfile-build.sarif
+          category: opengrep/dockerfile-build
 
       - name: Upload OpenGrep SARIF
         if: always()
