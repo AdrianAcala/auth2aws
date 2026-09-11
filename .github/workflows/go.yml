@@ -189,17 +189,18 @@ jobs:
   ci-success:
     name: CI success
     if: always()
-    needs: [test-linux, test-native, lint, build]
+    needs: [test-linux, test-native, security, lint, build]
     runs-on: ubuntu-latest
     steps:
       - name: Require every pull request check
         env:
           TEST_LINUX: ${{ needs.test-linux.result }}
           TEST_NATIVE: ${{ needs.test-native.result }}
+          SECURITY: ${{ needs.security.result }}
           LINT: ${{ needs.lint.result }}
           BUILD: ${{ needs.build.result }}
         run: |
-          for result in "$TEST_LINUX" "$TEST_NATIVE" "$LINT" "$BUILD"; do
+          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$LINT" "$BUILD"; do
             if [[ "$result" != "success" ]]; then
               echo "A required CI job did not succeed: $result" >&2
               exit 1
