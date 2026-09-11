@@ -104,6 +104,9 @@ jobs:
 
   opengrep:
     name: OpenGrep
+    permissions:
+      contents: read
+      security-events: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -130,20 +133,29 @@ jobs:
 
       - name: Run OpenGrep security scan
         run: |
+          mkdir -p opengrep-results
           opengrep scan \
             --config p/security-audit \
             --severity ERROR \
             --error \
             --disable-version-check \
-            --sarif-output="${RUNNER_TEMP}/opengrep.sarif" \
+            --sarif-output=opengrep-results/opengrep.sarif \
             .
+
+      - name: Publish OpenGrep findings to GitHub Code Scanning
+        if: always() && hashFiles('opengrep-results/opengrep.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: opengrep-results/opengrep.sarif
+          category: opengrep
 
       - name: Upload OpenGrep SARIF
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: opengrep-results
-          path: ${{ runner.temp }}/opengrep.sarif
+          path: opengrep-results/opengrep.sarif
           if-no-files-found: warn
           retention-days: 7
 
