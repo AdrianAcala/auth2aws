@@ -102,6 +102,51 @@ jobs:
           ignore-unfixed: "false"
           exit-code: "1"
 
+  opengrep:
+    name: OpenGrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install OpenGrep
+        env:
+          OPENGREP_VERSION: v1.30.0
+          OPENGREP_SHA256: 35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 3 --proto '=https' --tlsv1.2 \
+            --output "${RUNNER_TEMP}/opengrep" \
+            "https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/opengrep_manylinux_x86"
+          echo "${OPENGREP_SHA256}  ${RUNNER_TEMP}/opengrep" | sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/opengrep"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Verify OpenGrep installation
+        run: opengrep --version
+
+      - name: Run OpenGrep security scan
+        run: |
+          opengrep scan \
+            --config p/security-audit \
+            --severity ERROR \
+            --error \
+            --disable-version-check \
+            --sarif-output="${RUNNER_TEMP}/opengrep.sarif" \
+            .
+
+      - name: Upload OpenGrep SARIF
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: opengrep-results
+          path: ${{ runner.temp }}/opengrep.sarif
+          if-no-files-found: warn
+          retention-days: 7
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -189,7 +234,7 @@ jobs:
   ci-success:
     name: CI success
     if: always()
-    needs: [test-linux, test-native, security, lint, build]
+    needs: [test-linux, test-native, security, opengrep, lint, build]
     runs-on: ubuntu-latest
     steps:
       - name: Require every pull request check
@@ -197,10 +242,11 @@ jobs:
           TEST_LINUX: ${{ needs.test-linux.result }}
           TEST_NATIVE: ${{ needs.test-native.result }}
           SECURITY: ${{ needs.security.result }}
+          OPENGREP: ${{ needs.opengrep.result }}
           LINT: ${{ needs.lint.result }}
           BUILD: ${{ needs.build.result }}
         run: |
-          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$LINT" "$BUILD"; do
+          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$OPENGREP" "$LINT" "$BUILD"; do
             if [[ "$result" != "success" ]]; then
               echo "A required CI job did not succeed: $result" >&2
               exit 1
