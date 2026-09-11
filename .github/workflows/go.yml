@@ -46,6 +46,9 @@ jobs:
       - name: Test with coverage and race detection
         run: go test -race -count=1 -timeout=10m -covermode=atomic -coverprofile=coverage.out ./...
 
+      - name: Fuzz SAML parsing
+        run: go test -run '^$' -fuzz '^FuzzSAMLExtractorsNoPanic$' -fuzztime=30s -timeout=2m .
+
       - name: Require coverage floor
         run: scripts/check-coverage.sh coverage.out 50.0
 
