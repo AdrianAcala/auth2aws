@@ -7,7 +7,7 @@ toolchain go1.25.14
 require (
 	github.com/99designs/keyring v1.2.2
 	github.com/AlecAivazis/survey/v2 v2.3.7
-	github.com/Azure/go-ntlmssp v0.0.0-20211209120228-48547f28849e
+	github.com/Azure/go-ntlmssp v0.1.1
 	github.com/PuerkitoBio/goquery v1.9.2
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/avast/retry-go v3.0.0+incompatible
@@ -54,7 +54,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect

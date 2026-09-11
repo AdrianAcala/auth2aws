@@ -107,6 +107,167 @@ jobs:
           ignore-unfixed: "false"
           exit-code: "1"
 
+  go-security:
+    name: Go security
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install package analysis dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+
+      - name: Install pinned Go security tools
+        env:
+          GOSEC_VERSION: v2.29.0
+          GOVULNCHECK_VERSION: v1.7.0
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/go-security-bin"
+          GOBIN="${RUNNER_TEMP}/go-security-bin" go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
+          GOBIN="${RUNNER_TEMP}/go-security-bin" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          echo "${RUNNER_TEMP}/go-security-bin" >> "${GITHUB_PATH}"
+
+      - name: Run full gosec report
+        run: |
+          mkdir -p go-security-results
+          gosec \
+            -no-fail \
+            -exclude-generated \
+            -nosec-require-rules \
+            -nosec-require-justification \
+            -fmt sarif \
+            -out go-security-results/gosec.sarif \
+            ./...
+
+      - name: Run full govulncheck report
+        run: govulncheck -test -format sarif ./... > go-security-results/govulncheck.sarif
+
+      - name: Block high-confidence, high-severity gosec findings
+        run: |
+          gosec \
+            -exclude-generated \
+            -severity high \
+            -confidence high \
+            -nosec-require-rules \
+            -nosec-require-justification \
+            ./...
+
+      - name: Block reachable Go vulnerabilities
+        run: govulncheck -test ./...
+
+      - name: Add Go security findings to the job summary
+        if: always() && hashFiles('go-security-results/*.sarif') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          findings=$(jq -s '[.[] | .runs[]? as $run |
+            ($run.tool.driver.rules // [] | map({key: .id, value: (.defaultConfiguration.level // "warning")}) | from_entries) as $levels |
+            $run.results[]? | . + {level: (.level // $levels[.ruleId] // "warning")}
+          ]' go-security-results/*.sarif)
+          count=$(jq 'length' <<< "${findings}")
+          {
+            echo "## Go security findings"
+            echo
+            echo "The Go-specific scanners reported **${count}** finding(s). The complete, navigable results are published in GitHub Code Scanning."
+            if (( count > 0 )); then
+              echo
+              echo "| Severity | Rule | Location | Message |"
+              echo "| --- | --- | --- | --- |"
+              jq -r '.[:50][] | [
+                (.level // "warning" | ascii_upcase),
+                (.ruleId // "unknown" | gsub("[|`\\r\\n]"; " ")),
+                (((.locations[0].physicalLocation.artifactLocation.uri // "unknown") + ":" + ((.locations[0].physicalLocation.region.startLine // 1) | tostring)) | gsub("[|`\\r\\n]"; " ")),
+                ((.message.text // "") | gsub("[|`\\r\\n]"; " "))
+              ] | @tsv' <<< "${findings}" |
+                while IFS=$'\t' read -r severity rule location message; do
+                  printf '| %s | `%s` | `%s` | %s |\n' "${severity}" "${rule}" "${location}" "${message}"
+                done
+              if (( count > 50 )); then
+                echo
+                echo "Showing the first 50 findings. Use GitHub Code Scanning for the complete list."
+              fi
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish gosec findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('go-security-results/gosec.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: go-security-results/gosec.sarif
+          category: gosec
+
+      - name: Publish govulncheck findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('go-security-results/govulncheck.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: go-security-results/govulncheck.sarif
+          category: govulncheck
+
+      - name: Upload Go security reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-security-results
+          path: go-security-results/*.sarif
+          if-no-files-found: warn
+          retention-days: 7
+
+  codeql:
+    name: CodeQL (Go)
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          languages: go
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build Go packages for CodeQL
+        run: go build ./...
+
+      - name: Analyze Go with CodeQL
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          category: /language:go
+
   opengrep:
     name: OpenGrep
     permissions:
@@ -336,7 +497,7 @@ jobs:
   ci-success:
     name: CI success
     if: always() && github.event_name != 'schedule'
-    needs: [test-linux, test-native, security, opengrep, lint, build]
+    needs: [test-linux, test-native, security, go-security, codeql, opengrep, lint, build]
     runs-on: ubuntu-latest
     steps:
       - name: Require every pull request check
@@ -344,11 +505,13 @@ jobs:
           TEST_LINUX: ${{ needs.test-linux.result }}
           TEST_NATIVE: ${{ needs.test-native.result }}
           SECURITY: ${{ needs.security.result }}
+          GO_SECURITY: ${{ needs.go-security.result }}
+          CODEQL: ${{ needs.codeql.result }}
           OPENGREP: ${{ needs.opengrep.result }}
           LINT: ${{ needs.lint.result }}
           BUILD: ${{ needs.build.result }}
         run: |
-          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$OPENGREP" "$LINT" "$BUILD"; do
+          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$GO_SECURITY" "$CODEQL" "$OPENGREP" "$LINT" "$BUILD"; do
             if [[ "$result" != "success" ]]; then
               echo "A required CI job did not succeed: $result" >&2
               exit 1
