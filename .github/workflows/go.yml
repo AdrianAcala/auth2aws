@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "23 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -20,6 +22,7 @@ env:
 jobs:
   test-linux:
     name: Test (Linux)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -43,6 +46,9 @@ jobs:
       - name: Test with coverage and race detection
         run: go test -race -count=1 -timeout=10m -covermode=atomic -coverprofile=coverage.out ./...
 
+      - name: Fuzz SAML parsing
+        run: go test -run '^$' -fuzz '^FuzzSAMLExtractorsNoPanic$' -fuzztime=30s -timeout=2m .
+
       - name: Require coverage floor
         run: scripts/check-coverage.sh coverage.out 50.0
 
@@ -56,6 +62,7 @@ jobs:
 
   test-native:
     name: Test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -82,6 +89,7 @@ jobs:
 
   security:
     name: Trivy
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -102,8 +110,310 @@ jobs:
           ignore-unfixed: "false"
           exit-code: "1"
 
+  go-security:
+    name: Go security
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install package analysis dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+
+      - name: Install pinned Go security tools
+        env:
+          GOSEC_VERSION: v2.29.0
+          GOVULNCHECK_VERSION: v1.7.0
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/go-security-bin"
+          GOBIN="${RUNNER_TEMP}/go-security-bin" go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
+          GOBIN="${RUNNER_TEMP}/go-security-bin" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          echo "${RUNNER_TEMP}/go-security-bin" >> "${GITHUB_PATH}"
+
+      - name: Run full gosec report
+        run: |
+          mkdir -p go-security-results
+          gosec \
+            -no-fail \
+            -exclude-generated \
+            -nosec-require-rules \
+            -nosec-require-justification \
+            -fmt sarif \
+            -out go-security-results/gosec.sarif \
+            ./...
+
+      - name: Run full govulncheck report
+        run: govulncheck -test -format sarif ./... > go-security-results/govulncheck.sarif
+
+      - name: Block high-confidence, high-severity gosec findings
+        run: |
+          gosec \
+            -exclude-generated \
+            -severity high \
+            -confidence high \
+            -nosec-require-rules \
+            -nosec-require-justification \
+            ./...
+
+      - name: Block reachable Go vulnerabilities
+        run: govulncheck -test ./...
+
+      - name: Add Go security findings to the job summary
+        if: always() && hashFiles('go-security-results/*.sarif') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          findings=$(jq -s '[.[] | .runs[]? as $run |
+            ($run.tool.driver.rules // [] | map({key: .id, value: (.defaultConfiguration.level // "warning")}) | from_entries) as $levels |
+            $run.results[]? | . + {level: (.level // $levels[.ruleId] // "warning")}
+          ]' go-security-results/*.sarif)
+          count=$(jq 'length' <<< "${findings}")
+          {
+            echo "## Go security findings"
+            echo
+            echo "The Go-specific scanners reported **${count}** finding(s). The complete, navigable results are published in GitHub Code Scanning."
+            if (( count > 0 )); then
+              echo
+              echo "| Severity | Rule | Location | Message |"
+              echo "| --- | --- | --- | --- |"
+              jq -r '.[:50][] | [
+                (.level // "warning" | ascii_upcase),
+                (.ruleId // "unknown" | gsub("[|`\\r\\n]"; " ")),
+                (((.locations[0].physicalLocation.artifactLocation.uri // "unknown") + ":" + ((.locations[0].physicalLocation.region.startLine // 1) | tostring)) | gsub("[|`\\r\\n]"; " ")),
+                ((.message.text // "") | gsub("[|`\\r\\n]"; " "))
+              ] | @tsv' <<< "${findings}" |
+                while IFS=$'\t' read -r severity rule location message; do
+                  printf '| %s | `%s` | `%s` | %s |\n' "${severity}" "${rule}" "${location}" "${message}"
+                done
+              if (( count > 50 )); then
+                echo
+                echo "Showing the first 50 findings. Use GitHub Code Scanning for the complete list."
+              fi
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish gosec findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('go-security-results/gosec.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: go-security-results/gosec.sarif
+          category: gosec
+
+      - name: Publish govulncheck findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('go-security-results/govulncheck.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: go-security-results/govulncheck.sarif
+          category: govulncheck
+
+      - name: Upload Go security reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-security-results
+          path: go-security-results/*.sarif
+          if-no-files-found: warn
+          retention-days: 7
+
+  codeql:
+    name: CodeQL (Go)
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev libudev-dev
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          languages: go
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build Go packages for CodeQL
+        run: go build ./...
+
+      - name: Analyze Go with CodeQL
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          category: /language:go
+
+  opengrep:
+    name: OpenGrep
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install OpenGrep
+        env:
+          OPENGREP_VERSION: v1.30.0
+          OPENGREP_SHA256: 35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 3 --proto '=https' --tlsv1.2 \
+            --output "${RUNNER_TEMP}/opengrep" \
+            "https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/opengrep_manylinux_x86"
+          echo "${OPENGREP_SHA256}  ${RUNNER_TEMP}/opengrep" | sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/opengrep"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Verify OpenGrep installation
+        run: opengrep --version
+
+      - name: Scan repository and create SARIF report
+        run: |
+          mkdir -p opengrep-results
+          opengrep scan \
+            --config p/default \
+            --config p/secrets \
+            --strict \
+            --taint-intrafile \
+            --disable-version-check \
+            --sarif-output=opengrep-results/repository.sarif \
+            .
+
+      - name: Scan Dockerfile.build and create SARIF report
+        run: |
+          opengrep scan \
+            --config p/dockerfile \
+            --scan-unknown-extensions \
+            --strict \
+            --disable-version-check \
+            --sarif-output=opengrep-results/dockerfile-build.sarif \
+            Dockerfile.build
+
+      - name: Block newly introduced high-severity findings
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASELINE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          opengrep scan \
+            --config p/default \
+            --config p/secrets \
+            --severity ERROR \
+            --baseline-commit "${BASELINE_COMMIT}" \
+            --strict \
+            --taint-intrafile \
+            --error \
+            --disable-version-check \
+            .
+          opengrep scan \
+            --config p/dockerfile \
+            --severity ERROR \
+            --baseline-commit "${BASELINE_COMMIT}" \
+            --scan-unknown-extensions \
+            --strict \
+            --error \
+            --disable-version-check \
+            Dockerfile.build
+
+      - name: Add OpenGrep findings to the job summary
+        if: always() && hashFiles('opengrep-results/*.sarif') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          findings=$(jq -s '[.[] | .runs[]? as $run |
+            ($run.tool.driver.rules // [] | map({key: .id, value: (.defaultConfiguration.level // "warning")}) | from_entries) as $levels |
+            $run.results[]? | . + {level: (.level // $levels[.ruleId] // "warning")}
+          ]' opengrep-results/*.sarif)
+          count=$(jq 'length' <<< "${findings}")
+          {
+            echo "## OpenGrep findings"
+            echo
+            echo "OpenGrep reported **${count}** finding(s). The complete, navigable results are published in GitHub Code Scanning."
+            if (( count > 0 )); then
+              echo
+              echo "| Severity | Rule | Location | Message |"
+              echo "| --- | --- | --- | --- |"
+              jq -r '.[:50][] | [
+                (.level // "warning" | ascii_upcase),
+                (.ruleId // "unknown" | gsub("[|`\\r\\n]"; " ")),
+                (((.locations[0].physicalLocation.artifactLocation.uri // "unknown") + ":" + ((.locations[0].physicalLocation.region.startLine // 1) | tostring)) | gsub("[|`\\r\\n]"; " ")),
+                ((.message.text // "") | gsub("[|`\\r\\n]"; " "))
+              ] | @tsv' <<< "${findings}" |
+                while IFS=$'\t' read -r severity rule location message; do
+                  printf '| %s | `%s` | `%s` | %s |\n' "${severity}" "${rule}" "${location}" "${message}"
+                done
+              if (( count > 50 )); then
+                echo
+                echo "Showing the first 50 findings. Use GitHub Code Scanning for the complete list."
+              fi
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish repository findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('opengrep-results/repository.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: opengrep-results/repository.sarif
+          category: opengrep/repository
+
+      - name: Publish Dockerfile.build findings to GitHub Code Scanning
+        if: >-
+          always() &&
+          hashFiles('opengrep-results/dockerfile-build.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: opengrep-results/dockerfile-build.sarif
+          category: opengrep/dockerfile-build
+
+      - name: Upload OpenGrep SARIF
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: opengrep-results
+          path: opengrep-results/*.sarif
+          if-no-files-found: warn
+          retention-days: 7
+
   lint:
     name: Lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -129,6 +439,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -188,8 +499,8 @@ jobs:
 
   ci-success:
     name: CI success
-    if: always()
-    needs: [test-linux, test-native, security, lint, build]
+    if: always() && github.event_name != 'schedule'
+    needs: [test-linux, test-native, security, go-security, codeql, opengrep, lint, build]
     runs-on: ubuntu-latest
     steps:
       - name: Require every pull request check
@@ -197,10 +508,13 @@ jobs:
           TEST_LINUX: ${{ needs.test-linux.result }}
           TEST_NATIVE: ${{ needs.test-native.result }}
           SECURITY: ${{ needs.security.result }}
+          GO_SECURITY: ${{ needs.go-security.result }}
+          CODEQL: ${{ needs.codeql.result }}
+          OPENGREP: ${{ needs.opengrep.result }}
           LINT: ${{ needs.lint.result }}
           BUILD: ${{ needs.build.result }}
         run: |
-          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$LINT" "$BUILD"; do
+          for result in "$TEST_LINUX" "$TEST_NATIVE" "$SECURITY" "$GO_SECURITY" "$CODEQL" "$OPENGREP" "$LINT" "$BUILD"; do
             if [[ "$result" != "success" ]]; then
               echo "A required CI job did not succeed: $result" >&2
               exit 1

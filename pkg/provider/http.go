@@ -102,6 +102,7 @@ func (hc *HTTPClient) Do(req *http.Request) (*http.Response, error) {
 		resp, err = hc.doWithRetry(req)
 	} else {
 		hc.logHTTPRequest(req)
+		// #nosec G704 -- Providers intentionally send requests to user-configured identity-provider URLs.
 		resp, err = hc.Client.Do(req)
 	}
 	if err != nil {
@@ -126,6 +127,7 @@ func (hc *HTTPClient) doWithRetry(req *http.Request) (*http.Response, error) {
 	err := retry.Do(
 		func() error {
 			hc.logHTTPRequest(req)
+			// #nosec G704 -- Providers intentionally send requests to user-configured identity-provider URLs.
 			clientResp, err := hc.Client.Do(req)
 			if err != nil {
 				return err

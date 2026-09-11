@@ -1,0 +1,8 @@
+# OpenGrep scans first-party source and automation. Test fixtures, captured
+# identity-provider responses, and generated mocks are excluded because they
+# intentionally contain untrusted HTML/XML/JSON and create non-actionable noise.
+**/*_test.go
+**/testdata/**
+**/example/**
+pkg/provider/netiq/responses/**
+mocks/**
